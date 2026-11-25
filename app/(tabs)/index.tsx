@@ -1,6 +1,12 @@
-import { Audio } from 'expo-av';
+import {
+  RecordingOptions,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioRecorder,
+} from 'expo-audio';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -39,27 +45,28 @@ interface ModelProgressState {
   pct: number | null;
 }
 
-function getRecordingOptions(): Audio.RecordingOptions {
-  const base = Audio.RecordingOptionsPresets.HIGH_QUALITY;
-  const android: Audio.RecordingOptionsAndroid = {
+function getRecordingOptions(): RecordingOptions {
+  const base = RecordingPresets.HIGH_QUALITY;
+  const android: RecordingOptions['android'] = {
     ...base.android,
     extension: '.m4a',
-    outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-    audioEncoder: Audio.AndroidAudioEncoder.AAC,
     sampleRate: 16000,
-    numberOfChannels: 1,
-    bitRate: 64000,
+    outputFormat: 'mpeg4',
+    audioEncoder: 'aac',
   };
 
   if (Platform.OS !== 'web' || typeof MediaRecorder === 'undefined') {
     return {
       ...base,
+      sampleRate: 16000,
+      numberOfChannels: 1,
+      bitRate: 64000,
       isMeteringEnabled: true,
       android,
     };
   }
 
-  const webOptions: Audio.RecordingOptionsWeb = { ...base.web };
+  const webOptions: NonNullable<RecordingOptions['web']> = { ...base.web };
   if (typeof MediaRecorder.isTypeSupported === 'function') {
     if (MediaRecorder.isTypeSupported('audio/webm')) {
       webOptions.mimeType = 'audio/webm';
@@ -70,6 +77,9 @@ function getRecordingOptions(): Audio.RecordingOptions {
 
   return {
     ...base,
+    sampleRate: 16000,
+    numberOfChannels: 1,
+    bitRate: 64000,
     isMeteringEnabled: true,
     android,
     web: webOptions,
@@ -77,6 +87,9 @@ function getRecordingOptions(): Audio.RecordingOptions {
 }
 
 export default function CaptureScreen() {
+  const recordingOptions = useMemo(() => getRecordingOptions(), []);
+  const recorder = useAudioRecorder(recordingOptions);
+
   const [isRecording, setIsRecording] = useState(false);
   const [isRecorderBusy, setIsRecorderBusy] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -91,7 +104,8 @@ export default function CaptureScreen() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [modelProgress, setModelProgress] = useState<ModelProgressState | null>(null);
 
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingActiveRef = useRef(false);
+  const statusTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const maxDurationMsRef = useRef(0);
   const busyRef = useRef(false);
   const mountedRef = useRef(true);
@@ -152,7 +166,7 @@ export default function CaptureScreen() {
         .catch(() => {});
       return () => {
         stopActivePlayback();
-        if (recordingRef.current && !busyRef.current) {
+        if (recordingActiveRef.current && !busyRef.current) {
           stopRecordingRef.current();
         }
       };
@@ -198,36 +212,41 @@ export default function CaptureScreen() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      const active = recordingRef.current;
-      recordingRef.current = null;
-      if (active) {
-        active.setOnRecordingStatusUpdate(null);
-        active
-          .stopAndUnloadAsync()
-          .then(() => discardTempAudioClip(active.getURI()))
+      if (statusTimerRef.current) {
+        clearInterval(statusTimerRef.current);
+        statusTimerRef.current = null;
+      }
+      if (recordingActiveRef.current) {
+        recordingActiveRef.current = false;
+        recorder
+          .stop()
+          .then(() => discardTempAudioClip(recorder.uri))
           .catch(() => {});
       }
       stopActivePlayback();
     };
-  }, []);
+  }, [recorder]);
 
   const stopRecording = useCallback(async () => {
-    if (busyRef.current || !recordingRef.current) return;
+    if (busyRef.current || !recordingActiveRef.current) return;
     busyRef.current = true;
     setIsRecorderBusy(true);
+    recordingActiveRef.current = false;
 
-    const active = recordingRef.current;
-    recordingRef.current = null;
-    active.setOnRecordingStatusUpdate(null);
+    if (statusTimerRef.current) {
+      clearInterval(statusTimerRef.current);
+      statusTimerRef.current = null;
+    }
 
     try {
-      const status = await active.stopAndUnloadAsync();
-      const uri = active.getURI();
+      const preStopStatus = recorder.getStatus();
+      await recorder.stop();
+      const uri = recorder.uri ?? preStopStatus.url ?? recorder.getStatus().url;
 
       if (Platform.OS !== 'web') {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
         }).catch(() => {});
       }
 
@@ -238,7 +257,7 @@ export default function CaptureScreen() {
 
       setIsRecording(false);
       setMeterLevel(0.08);
-      const rawDuration = status.durationMillis;
+      const rawDuration = preStopStatus.durationMillis;
       const statusSec = Number.isFinite(rawDuration) ? Math.round((rawDuration ?? 0) / 1000) : 0;
       const trackedSec = Math.round(maxDurationMsRef.current / 1000);
       const durationSec = Math.max(1, trackedSec, statusSec);
@@ -278,19 +297,19 @@ export default function CaptureScreen() {
       busyRef.current = false;
       if (mountedRef.current) setIsRecorderBusy(false);
     }
-  }, [refreshLatest, runBackgroundProcessing]);
+  }, [recorder, refreshLatest, runBackgroundProcessing]);
 
   stopRecordingRef.current = stopRecording;
 
   const startRecording = async () => {
-    if (busyRef.current || recordingRef.current || isSaving) return;
+    if (busyRef.current || recordingActiveRef.current || isSaving) return;
     busyRef.current = true;
     setIsRecorderBusy(true);
     setError(null);
 
     try {
       await stopActivePlayback();
-      const permission = await Audio.requestPermissionsAsync();
+      const permission = await requestRecordingPermissionsAsync();
       if (!mountedRef.current) return;
       if (!permission.granted) {
         setError('Microphone permission is required to record voice notes.');
@@ -298,36 +317,32 @@ export default function CaptureScreen() {
       }
 
       if (Platform.OS !== 'web') {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
+        await setAudioModeAsync({
+          allowsRecording: true,
+          playsInSilentMode: true,
         });
       }
 
-      const { recording: created } = await Audio.Recording.createAsync(getRecordingOptions());
-      if (!mountedRef.current) {
-        await created.stopAndUnloadAsync().catch(() => {});
-        await discardTempAudioClip(created.getURI());
-        return;
-      }
+      await recorder.prepareToRecordAsync();
+      if (!mountedRef.current) return;
+      recorder.record();
 
-      recordingRef.current = created;
+      recordingActiveRef.current = true;
       maxDurationMsRef.current = 0;
       setIsRecording(true);
       setElapsedSec(0);
       setMeterLevel(0.08);
 
-      created.setProgressUpdateInterval(250);
-      created.setOnRecordingStatusUpdate((status) => {
-        if (!mountedRef.current || recordingRef.current !== created) return;
+      statusTimerRef.current = setInterval(() => {
+        if (!mountedRef.current || !recordingActiveRef.current) return;
+        const status = recorder.getStatus();
         const durationMs = Number.isFinite(status.durationMillis)
           ? (status.durationMillis ?? 0)
           : 0;
         if (durationMs > maxDurationMsRef.current) {
           maxDurationMsRef.current = durationMs;
         }
-        const nextSec = Math.floor(durationMs / 1000);
-        setElapsedSec(nextSec);
+        setElapsedSec(Math.floor(durationMs / 1000));
 
         if (typeof status.metering === 'number' && Number.isFinite(status.metering)) {
           const normalized = Math.min(1, Math.max(0.08, (status.metering + 60) / 60));
@@ -335,9 +350,9 @@ export default function CaptureScreen() {
         }
 
         if (durationMs >= MAX_RECORDING_SECONDS * 1000 && !busyRef.current) {
-          stopRecording();
+          stopRecordingRef.current();
         }
-      });
+      }, 250);
     } catch {
       if (mountedRef.current) {
         setError('Could not start audio recording.');

@@ -1,4 +1,10 @@
-import { Audio } from 'expo-av';
+import {
+  AudioPlayer,
+  AudioStatus,
+  createAudioPlayer,
+  PLAYBACK_STATUS_UPDATE,
+  setAudioModeAsync,
+} from 'expo-audio';
 import * as FileSystem from 'expo-file-system';
 import { Platform, Share } from 'react-native';
 
@@ -78,6 +84,10 @@ export async function stopActivePlayback(): Promise<void> {
   }
 }
 
+function toSeconds(value: number): number {
+  return Platform.OS === 'web' ? value / 1000 : value;
+}
+
 export async function startAudioPlayback(
   uri: string,
   onProgress: (state: { isPlaying: boolean; positionSec: number; durationSec: number }) => void,
@@ -87,7 +97,8 @@ export async function startAudioPlayback(
   const token = ++activeToken;
   let settled = false;
   let pollId: ReturnType<typeof setInterval> | null = null;
-  let sound: Audio.Sound | null = null;
+  let subscription: { remove: () => void } | null = null;
+  let player: AudioPlayer | null = null;
   let hasStarted = false;
 
   const cleanup = async () => {
@@ -97,14 +108,22 @@ export async function startAudioPlayback(
       clearInterval(pollId);
       pollId = null;
     }
+    if (subscription) {
+      subscription.remove();
+      subscription = null;
+    }
     if (activeStopper === stop) {
       activeStopper = null;
     }
-    if (sound) {
-      const target = sound;
-      sound = null;
-      await target.stopAsync().catch(() => {});
-      await target.unloadAsync().catch(() => {});
+    if (player) {
+      const target = player;
+      player = null;
+      try {
+        target.pause();
+      } catch {}
+      try {
+        target.remove();
+      } catch {}
     }
   };
 
@@ -125,9 +144,9 @@ export async function startAudioPlayback(
   }
 
   if (Platform.OS !== 'web') {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
     }).catch(() => {});
   }
 
@@ -136,25 +155,20 @@ export async function startAudioPlayback(
     return stop;
   }
 
-  const handleStatus = (status: Awaited<ReturnType<Audio.Sound['getStatusAsync']>>) => {
+  const handleStatus = (status: AudioStatus) => {
     if (settled || !status.isLoaded) return;
-    const durationSec = Number.isFinite(status.durationMillis)
-      ? Math.round((status.durationMillis ?? 0) / 1000)
-      : 0;
-    const positionSec = Number.isFinite(status.positionMillis)
-      ? Math.floor((status.positionMillis ?? 0) / 1000)
-      : 0;
+    const rawDuration = toSeconds(status.duration ?? 0);
+    const rawPosition = toSeconds(status.currentTime ?? 0);
+    const durationSec =
+      Number.isFinite(rawDuration) && rawDuration > 0 ? Math.round(rawDuration) : 0;
+    const positionSec =
+      Number.isFinite(rawPosition) && rawPosition > 0 ? Math.floor(rawPosition) : 0;
 
-    if (status.isPlaying || (status.positionMillis ?? 0) > 0) {
+    if (status.playing || rawPosition > 0) {
       hasStarted = true;
     }
 
-    if (status.didJustFinish) {
-      stop();
-      return;
-    }
-
-    if (!status.isPlaying && hasStarted) {
+    if (status.didJustFinish || (!status.playing && hasStarted)) {
       stop();
       return;
     }
@@ -167,23 +181,23 @@ export async function startAudioPlayback(
   };
 
   try {
-    const created = await Audio.Sound.createAsync({ uri }, { shouldPlay: true }, handleStatus);
+    const created = createAudioPlayer({ uri }, 250);
     if (token !== activeToken || settled) {
-      await created.sound.stopAsync().catch(() => {});
-      await created.sound.unloadAsync().catch(() => {});
+      try {
+        created.remove();
+      } catch {}
       await cleanup();
       return stop;
     }
-    sound = created.sound;
+    player = created;
+    subscription = created.addListener(PLAYBACK_STATUS_UPDATE, handleStatus);
+    created.play();
 
     if (Platform.OS === 'web') {
       pollId = setInterval(() => {
-        if (!sound || settled) return;
-        sound
-          .getStatusAsync()
-          .then(handleStatus)
-          .catch(() => {});
-      }, 100);
+        if (!player || settled) return;
+        handleStatus(player.currentStatus);
+      }, 150);
     }
   } catch (err) {
     await cleanup();
