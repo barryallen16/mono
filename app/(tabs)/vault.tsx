@@ -1,18 +1,11 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Platform, ScrollView, Share, Text, View } from 'react-native';
+import { Platform, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PixelIcon } from '~/components/pixel-icon';
-import {
-  Button,
-  ErrorBanner,
-  Panel,
-  ScreenHeader,
-  Sheet,
-  Tappable,
-  tabularNums,
-} from '~/components/ui';
+import { Button, ErrorBanner, Panel, ScreenHeader, Sheet, tabularNums } from '~/components/ui';
+import { exportNotesToFile } from '~/utils/audio';
 import {
   CactusStatus,
   clearCactusModels,
@@ -20,24 +13,47 @@ import {
   prepareCactusModels,
   subscribeCactusProgress,
 } from '~/utils/cactus';
-import { deleteNote, listNotes, MonoNote, wipeAllNotes } from '~/utils/db';
-import { formatDuration } from '~/utils/notes';
+import { computeStreak, formatLocalDate, listNotes, MonoNote, wipeAllNotes } from '~/utils/db';
 
-type ConfirmAction = { type: 'delete'; note: MonoNote } | { type: 'wipe' } | null;
+interface ModelProgressState {
+  label: string;
+  valueLabel: string;
+  pct: number | null;
+}
 
 function formatMb(bytes: number): string {
   if (!bytes) return 'not cached';
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function last14Days(): string[] {
+  const days: string[] = [];
+  for (let offset = 13; offset >= 0; offset -= 1) {
+    const d = new Date();
+    d.setDate(d.getDate() - offset);
+    days.push(formatLocalDate(d));
+  }
+  return days;
+}
+
+const EXPORT_MESSAGES: Record<'saved' | 'shared' | 'downloaded' | 'cancelled', string> = {
+  saved: 'Export saved to selected folder.',
+  shared: 'Export ready to share.',
+  downloaded: 'Downloaded mono-export.json.',
+  cancelled: 'Export cancelled.',
+};
+
 export default function VaultScreen() {
   const router = useRouter();
   const [notes, setNotes] = useState<MonoNote[]>([]);
-  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [showWipeConfirm, setShowWipeConfirm] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [isModelBusy, setIsModelBusy] = useState(false);
-  const [modelProgress, setModelProgress] = useState<{ label: string; pct: number } | null>(null);
+  const [modelProgress, setModelProgress] = useState<ModelProgressState | null>(null);
   const [cactusStatus, setCactusStatus] = useState<CactusStatus | null>(null);
+  const [cacheNotice, setCacheNotice] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -59,8 +75,27 @@ export default function VaultScreen() {
   useEffect(() => {
     const sub = subscribeCactusProgress((ev) => {
       if (ev.phase === 'downloading') {
-        const pct = Math.round(ev.progress * 100);
-        setModelProgress({ label: `Downloading ${ev.model}`, pct });
+        if (ev.progress >= 0) {
+          const pct = Math.min(100, Math.max(0, Math.round(ev.progress * 100)));
+          setModelProgress({
+            label: `Downloading ${ev.model}`,
+            valueLabel: `${pct}%`,
+            pct,
+          });
+        } else {
+          const mb = (ev.receivedBytes / (1024 * 1024)).toFixed(1);
+          setModelProgress({
+            label: `Downloading ${ev.model}`,
+            valueLabel: `${mb} MB`,
+            pct: null,
+          });
+        }
+      } else if (ev.phase === 'loading') {
+        setModelProgress({
+          label: `Loading ${ev.model}...`,
+          valueLabel: 'Loading...',
+          pct: null,
+        });
       } else {
         setModelProgress(null);
       }
@@ -73,6 +108,7 @@ export default function VaultScreen() {
   const handlePrepareModels = async () => {
     setIsModelBusy(true);
     setError(null);
+    setCacheNotice(null);
     try {
       const next = await prepareCactusModels();
       setCactusStatus(next);
@@ -87,9 +123,15 @@ export default function VaultScreen() {
   const handleClearModels = async () => {
     setIsModelBusy(true);
     setError(null);
+    setCacheNotice(null);
     try {
       const next = await clearCactusModels();
       setCactusStatus(next);
+      if (next?.whistleLoaded || next?.needleLoaded) {
+        setCacheNotice('Cache cleared (restart app to unload RAM)');
+      } else {
+        setCacheNotice('Model cache cleared.');
+      }
     } catch {
       setError('Could not clear cached models.');
     } finally {
@@ -98,49 +140,28 @@ export default function VaultScreen() {
   };
 
   const handleExport = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
     setError(null);
-    const payload = JSON.stringify(notes, null, 2);
-
-    if (Platform.OS === 'web' && typeof document !== 'undefined') {
-      try {
-        const blob = new Blob([payload], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = 'mono-export.json';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      } catch {
-        setError('Could not download export file.');
-      }
-      return;
-    }
-
+    setExportNotice(null);
     try {
-      await Share.share({
-        title: 'mono-export.json',
-        message: payload,
-      });
+      const outcome = await exportNotesToFile(notes);
+      setExportNotice(EXPORT_MESSAGES[outcome]);
     } catch {
-      setError('Could not share export.');
+      setError('Could not export notes.');
+    } finally {
+      setIsExporting(false);
     }
   };
 
-  const handleConfirm = async () => {
-    if (!confirmAction || isBusy) return;
+  const handleWipeConfirm = async () => {
+    if (isBusy) return;
     setIsBusy(true);
     setError(null);
     try {
-      if (confirmAction.type === 'delete') {
-        await deleteNote(confirmAction.note.id);
-        setNotes((prev) => prev.filter((n) => n.id !== confirmAction.note.id));
-      } else {
-        await wipeAllNotes();
-        setNotes([]);
-      }
-      setConfirmAction(null);
+      await wipeAllNotes();
+      setNotes([]);
+      setShowWipeConfirm(false);
     } catch {
       setError('Could not update local storage.');
     } finally {
@@ -148,13 +169,20 @@ export default function VaultScreen() {
     }
   };
 
+  const streak = computeStreak(notes);
+  const openTasks = notes.reduce(
+    (sum, note) => sum + note.actionItems.filter((item) => !item.done).length,
+    0
+  );
+  const activeDates = new Set(notes.map((n) => n.localDate));
+  const days = last14Days();
   const storageLabel = Platform.OS === 'web' ? 'localStorage (browser)' : 'expo-sqlite (on-device)';
 
   return (
     <SafeAreaView className="flex-1 bg-bg">
       <ScreenHeader
         title="Vault"
-        subtitle="Local storage and data export"
+        subtitle="Cadence, runtime, and data export"
         right={
           <Text className="font-mono text-xs text-muted" style={tabularNums}>
             {notes.length} {notes.length === 1 ? 'entry' : 'entries'}
@@ -165,6 +193,56 @@ export default function VaultScreen() {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
         <View className="w-full max-w-2xl gap-4 self-center">
           {error ? <ErrorBanner>{error}</ErrorBanner> : null}
+
+          <Panel className="gap-3">
+            <View className="flex-row items-center justify-between">
+              <Text className="font-pixel text-base text-ink">Cadence</Text>
+              <View className="flex-row items-center gap-1.5 rounded-md border border-line bg-bg px-2.5 py-1">
+                <PixelIcon name="zap" size={16} color="#9d91cc" />
+                <Text className="font-pixel text-sm text-ink" style={tabularNums}>
+                  {streak}d
+                </Text>
+              </View>
+            </View>
+
+            <View className="flex-row justify-between gap-1.5">
+              {days.map((day) => {
+                const filled = activeDates.has(day);
+                return (
+                  <View
+                    key={day}
+                    className={`h-5 flex-1 rounded-sm border ${
+                      filled ? 'border-accent bg-accent' : 'border-line bg-bg'
+                    }`}
+                  />
+                );
+              })}
+            </View>
+
+            <View className="flex-row justify-between">
+              <Text className="font-mono text-xs text-muted" style={tabularNums}>
+                {days[0]}
+              </Text>
+              <Text className="font-mono text-xs text-muted" style={tabularNums}>
+                {days[days.length - 1]}
+              </Text>
+            </View>
+
+            <View className="flex-row gap-3 border-t border-line pt-2.5">
+              <View className="flex-1 gap-0.5">
+                <Text className="font-mono text-xs text-muted">Entries</Text>
+                <Text className="font-pixel text-xl text-ink" style={tabularNums}>
+                  {notes.length}
+                </Text>
+              </View>
+              <View className="flex-1 gap-0.5">
+                <Text className="font-mono text-xs text-muted">Open tasks</Text>
+                <Text className="font-pixel text-xl text-ink" style={tabularNums}>
+                  {openTasks}
+                </Text>
+              </View>
+            </View>
+          </Panel>
 
           <Panel className="gap-2">
             <Text className="font-pixel text-base text-ink">Runtime</Text>
@@ -189,14 +267,14 @@ export default function VaultScreen() {
                 <View className="flex-row justify-between border-t border-line pt-2">
                   <Text className="font-mono text-xs text-muted">Whistle STT</Text>
                   <Text className="font-mono text-xs text-ink" style={tabularNums}>
-                    {cactusStatus.whistleLoaded ? 'loaded · ' : ''}
+                    {cactusStatus.whistleLoaded ? 'loaded - ' : ''}
                     {formatMb(cactusStatus.whistleBytes)}
                   </Text>
                 </View>
                 <View className="flex-row justify-between border-t border-line pt-2">
                   <Text className="font-mono text-xs text-muted">Needle 3</Text>
                   <Text className="font-mono text-xs text-ink" style={tabularNums}>
-                    {cactusStatus.needleLoaded ? 'loaded · ' : ''}
+                    {cactusStatus.needleLoaded ? 'loaded - ' : ''}
                     {formatMb(cactusStatus.needleBytes)}
                   </Text>
                 </View>
@@ -205,15 +283,22 @@ export default function VaultScreen() {
                     <View className="flex-row items-center justify-between">
                       <Text className="font-mono text-xs text-accent">{modelProgress.label}</Text>
                       <Text className="font-mono text-xs text-muted" style={tabularNums}>
-                        {modelProgress.pct}%
+                        {modelProgress.valueLabel}
                       </Text>
                     </View>
                     <View className="h-2 overflow-hidden rounded-sm border border-line bg-bg">
                       <View
                         className="h-full bg-accent"
-                        style={{ width: `${modelProgress.pct}%` }}
+                        style={{
+                          width: modelProgress.pct !== null ? `${modelProgress.pct}%` : '35%',
+                        }}
                       />
                     </View>
+                  </View>
+                ) : null}
+                {cacheNotice ? (
+                  <View className="rounded-md border border-line bg-bg px-3 py-2">
+                    <Text className="font-mono text-xs text-muted">{cacheNotice}</Text>
                   </View>
                 ) : null}
                 <View className="mt-1 gap-2">
@@ -244,12 +329,18 @@ export default function VaultScreen() {
 
           <Panel className="gap-2.5">
             <Text className="font-pixel text-base text-ink">Data</Text>
+            {exportNotice ? (
+              <View className="rounded-md border border-line bg-bg px-3 py-2">
+                <Text className="font-mono text-xs text-accent">{exportNotice}</Text>
+              </View>
+            ) : null}
             <Button
               label="Export JSON"
               icon="download"
               variant="secondary"
+              loading={isExporting}
               onPress={handleExport}
-              disabled={notes.length === 0}
+              disabled={notes.length === 0 || isExporting}
             />
             <Button
               label="View onboarding"
@@ -261,64 +352,34 @@ export default function VaultScreen() {
               label="Wipe all notes"
               icon="trash"
               variant="danger"
-              onPress={() => setConfirmAction({ type: 'wipe' })}
+              onPress={() => setShowWipeConfirm(true)}
               disabled={notes.length === 0}
             />
-          </Panel>
-
-          <Panel className="gap-3">
-            <Text className="font-pixel text-base text-ink">Saved entries</Text>
-            {notes.length === 0 ? (
-              <Text className="font-mono text-xs text-muted">Nothing stored yet.</Text>
-            ) : (
-              notes.map((note) => (
-                <View
-                  key={note.id}
-                  className="flex-row items-start justify-between gap-3 border-t border-line pt-3">
-                  <View className="flex-1">
-                    <Text className="font-mono-medium text-xs text-ink">{note.title}</Text>
-                    <Text className="mt-0.5 font-mono text-xs text-muted" style={tabularNums}>
-                      {note.audioUri && note.durationSec > 0
-                        ? `${note.localDate} · ${formatDuration(note.durationSec)}`
-                        : note.localDate}
-                    </Text>
-                  </View>
-                  <Tappable
-                    onPress={() => setConfirmAction({ type: 'delete', note })}
-                    accessibilityLabel={`Delete ${note.title}`}
-                    className="h-10 w-10 items-center justify-center rounded-md border border-line bg-bg">
-                    <PixelIcon name="trash" size={16} color="#fca5a5" />
-                  </Tappable>
-                </View>
-              ))
-            )}
           </Panel>
         </View>
       </ScrollView>
 
       <Sheet
-        visible={confirmAction !== null}
-        onClose={() => !isBusy && setConfirmAction(null)}
-        title={confirmAction?.type === 'wipe' ? 'Wipe all local notes?' : 'Delete entry?'}>
+        visible={showWipeConfirm}
+        onClose={() => !isBusy && setShowWipeConfirm(false)}
+        title="Wipe all local notes?">
         <View className="gap-4">
           <Text className="font-mono text-xs leading-5 text-muted">
-            {confirmAction?.type === 'wipe'
-              ? 'This permanently removes every note and voice clip on this device.'
-              : 'This removes the entry and its saved audio clip from local storage.'}
+            This permanently removes every note and voice clip on this device.
           </Text>
           <View className="gap-2.5">
             <Button
-              label={confirmAction?.type === 'wipe' ? 'Wipe all' : 'Delete'}
+              label="Wipe all"
               icon="trash"
               variant="danger"
               loading={isBusy}
-              onPress={handleConfirm}
+              onPress={handleWipeConfirm}
             />
             <Button
               label="Cancel"
               variant="secondary"
               disabled={isBusy}
-              onPress={() => setConfirmAction(null)}
+              onPress={() => setShowWipeConfirm(false)}
             />
           </View>
         </View>

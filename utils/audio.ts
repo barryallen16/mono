@@ -212,21 +212,21 @@ export async function exportNotesToFile(
   }
 
   if (Platform.OS === 'android' && FileSystem.StorageAccessFramework) {
+    const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+    if (!permissions.granted) {
+      return 'cancelled';
+    }
+    const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
+      permissions.directoryUri,
+      `mono-export-${formatLocalDate()}`,
+      'application/json'
+    );
     try {
-      const permissions =
-        await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
-      if (!permissions.granted) {
-        return 'cancelled';
-      }
-      const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
-        permissions.directoryUri,
-        `mono-export-${formatLocalDate()}`,
-        'application/json'
-      );
       await FileSystem.writeAsStringAsync(fileUri, payload);
       return 'saved';
-    } catch {
-      // Fall through to cache file + system Share sheet when SAF is unavailable.
+    } catch (err) {
+      await FileSystem.deleteAsync(fileUri, { idempotent: true }).catch(() => {});
+      throw err;
     }
   }
 
@@ -238,7 +238,7 @@ export async function exportNotesToFile(
   await Share.share({
     title: 'mono-export.json',
     ...(fileUri ? { url: fileUri } : {}),
-    message: payload.length < 100000 || !fileUri ? payload : fileUri,
+    message: payload,
   });
   return 'shared';
 }

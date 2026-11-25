@@ -241,7 +241,13 @@ export function filterNotes(notes: MonoNote[], query: string): MonoNote[] {
     const actionsText = note.actionItems.map((item) => item.text).join(' ');
     const haystack =
       `${note.title} ${note.summary} ${note.transcript} ${note.tags.join(' ')} ${actionsText}`.toLowerCase();
-    return terms.every((term) => haystack.includes(term));
+    return terms.every((term) => {
+      if (term.startsWith('#') && term.length > 1) {
+        const tagTerm = term.slice(1);
+        return haystack.includes(term) || note.tags.some((t) => t.toLowerCase().includes(tagTerm));
+      }
+      return haystack.includes(term);
+    });
   });
 }
 

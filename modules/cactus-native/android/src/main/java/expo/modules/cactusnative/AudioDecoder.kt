@@ -8,6 +8,8 @@ import android.media.MediaFormat
 import android.net.Uri
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileInputStream
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
@@ -22,12 +24,25 @@ internal object AudioDecoder {
   private const val PCM_24BIT_ENCODING = 21
   private const val SINC_ZERO_CROSSINGS = 8.0
 
+  private const val MAX_POST_EOS_EMPTY_LOOPS = 300
+
   fun decodeToMono16k(context: Context, uriString: String): FloatArray {
     val uri = Uri.parse(uriString)
     val path = if (uri.scheme == null || uri.scheme == "file") uri.path ?: uriString else null
+    val mimeHint = if (uri.scheme == "content") context.contentResolver.getType(uri) else null
+    val isWav =
+      (path != null && path.lowercase().endsWith(".wav")) ||
+        uriString.lowercase().endsWith(".wav") ||
+        mimeHint.equals("audio/wav", ignoreCase = true) ||
+        mimeHint.equals("audio/x-wav", ignoreCase = true)
 
-    if (path != null && path.lowercase().endsWith(".wav")) {
-      return decodeWavFile(File(path))
+    if (isWav) {
+      if (uri.scheme == "content") {
+        val stream = context.contentResolver.openInputStream(uri)
+          ?: throw IllegalArgumentException("Unable to open WAV stream")
+        return stream.use { decodeWavStream(it) }
+      }
+      return FileInputStream(File(path ?: uriString)).use { decodeWavStream(it) }
     }
 
     val extractor = MediaExtractor()
@@ -58,7 +73,7 @@ internal object AudioDecoder {
       val mime = format.getString(MediaFormat.KEY_MIME)
         ?: throw IllegalArgumentException("Audio track missing MIME type")
       var sampleRate = if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-        format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+        format.getInteger(MediaFormat.KEY_SAMPLE_RATE).coerceIn(8000, 192000)
       } else {
         44100
       }
@@ -84,6 +99,7 @@ internal object AudioDecoder {
         val info = MediaCodec.BufferInfo()
         var inputDone = false
         var outputDone = false
+        var postEosEmptyLoops = 0
 
         while (!outputDone) {
           if (!inputDone) {
@@ -104,9 +120,10 @@ internal object AudioDecoder {
           val outIdx = codec.dequeueOutputBuffer(info, 10_000)
           when {
             outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+              postEosEmptyLoops = 0
               val outFormat = codec.outputFormat
               if (outFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-                sampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                sampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE).coerceIn(8000, 192000)
               }
               if (outFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
                 channelCount = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
@@ -116,6 +133,7 @@ internal object AudioDecoder {
               }
             }
             outIdx >= 0 -> {
+              postEosEmptyLoops = 0
               val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
               val outBuf = codec.getOutputBuffer(outIdx)
               if (!isConfig && outBuf != null && info.size > 0) {
@@ -127,6 +145,12 @@ internal object AudioDecoder {
               }
               codec.releaseOutputBuffer(outIdx, false)
               if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                outputDone = true
+              }
+            }
+            inputDone -> {
+              postEosEmptyLoops += 1
+              if (postEosEmptyLoops >= MAX_POST_EOS_EMPTY_LOOPS) {
                 outputDone = true
               }
             }
@@ -150,58 +174,87 @@ internal object AudioDecoder {
     }
   }
 
-  private fun decodeWavFile(file: File): FloatArray {
-    val bytes = file.readBytes()
-    if (bytes.size < 44) throw IllegalArgumentException("Invalid WAV file")
-    val riff = String(bytes, 0, 4, Charsets.US_ASCII)
-    val wave = String(bytes, 8, 4, Charsets.US_ASCII)
+  private fun readExact(stream: InputStream, size: Int): ByteArray? {
+    val buf = ByteArray(size)
+    var read = 0
+    while (read < size) {
+      val n = stream.read(buf, read, size - read)
+      if (n <= 0) break
+      read += n
+    }
+    return if (read == size) buf else null
+  }
+
+  private fun skipExact(stream: InputStream, count: Long) {
+    var remaining = count
+    val scratch = ByteArray(4096)
+    while (remaining > 0) {
+      val skipped = stream.skip(remaining)
+      if (skipped > 0) {
+        remaining -= skipped
+        continue
+      }
+      val n = stream.read(scratch, 0, minOf(remaining, scratch.size.toLong()).toInt())
+      if (n <= 0) break
+      remaining -= n
+    }
+  }
+
+  private fun decodeWavStream(stream: InputStream): FloatArray {
+    val header = readExact(stream, 12) ?: throw IllegalArgumentException("Invalid WAV file")
+    val riff = String(header, 0, 4, Charsets.US_ASCII)
+    val wave = String(header, 8, 4, Charsets.US_ASCII)
     if (riff != "RIFF" || wave != "WAVE") {
       throw IllegalArgumentException("Unsupported WAV container")
     }
 
-    val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
     var channels = 1
     var sampleRate = TARGET_SAMPLE_RATE
     var bitsPerSample = 16
     var audioFormat = 1
-    var dataStart = -1
-    var dataSize = 0
+    var dataBytes: ByteArray? = null
 
-    var pos = 12
-    while (pos + 8 <= bytes.size) {
-      val chunkId = String(bytes, pos, 4, Charsets.US_ASCII)
-      val chunkSize = buf.getInt(pos + 4)
+    while (true) {
+      val chunkHeader = readExact(stream, 8) ?: break
+      val chunkId = String(chunkHeader, 0, 4, Charsets.US_ASCII)
+      val chunkSize = ByteBuffer.wrap(chunkHeader, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
       if (chunkSize < 0) {
         throw IllegalArgumentException("Corrupt WAV chunk size")
       }
-      val payloadStart = pos + 8
-      if (chunkId == "fmt " && payloadStart + 16 <= bytes.size) {
-        audioFormat = buf.getShort(payloadStart).toInt() and 0xFFFF
-        channels = (buf.getShort(payloadStart + 2).toInt() and 0xFFFF).coerceAtLeast(1)
-        sampleRate = buf.getInt(payloadStart + 4).coerceAtLeast(8000)
-        bitsPerSample = buf.getShort(payloadStart + 14).toInt() and 0xFFFF
+      if (chunkId == "fmt ") {
+        if (chunkSize < 16) throw IllegalArgumentException("Invalid WAV fmt chunk")
+        val fmtBytes = readExact(stream, chunkSize) ?: throw IllegalArgumentException("Truncated WAV fmt chunk")
+        val fmtBuf = ByteBuffer.wrap(fmtBytes).order(ByteOrder.LITTLE_ENDIAN)
+        audioFormat = fmtBuf.getShort(0).toInt() and 0xFFFF
+        channels = (fmtBuf.getShort(2).toInt() and 0xFFFF).coerceAtLeast(1)
+        sampleRate = fmtBuf.getInt(4).coerceIn(8000, 192000)
+        bitsPerSample = fmtBuf.getShort(14).toInt() and 0xFFFF
+        if ((chunkSize and 1) != 0) skipExact(stream, 1L)
       } else if (chunkId == "data") {
-        dataStart = payloadStart
-        dataSize = chunkSize.coerceAtMost((bytes.size - dataStart).coerceAtLeast(0))
+        if (chunkSize <= 0) return FloatArray(0)
+        val buf = ByteArray(chunkSize)
+        var read = 0
+        while (read < chunkSize) {
+          val n = stream.read(buf, read, chunkSize - read)
+          if (n <= 0) break
+          read += n
+        }
+        if (read <= 0) return FloatArray(0)
+        dataBytes = if (read == chunkSize) buf else buf.copyOf(read)
         break
+      } else {
+        skipExact(stream, chunkSize.toLong() + (chunkSize and 1).toLong())
       }
-      val step = 8L + chunkSize.toLong() + (chunkSize and 1).toLong()
-      if (step <= 0L || pos + step > Int.MAX_VALUE) break
-      pos += step.toInt()
     }
 
-    if (dataStart < 0 || dataSize <= 0) {
-      return FloatArray(0)
-    }
-
+    val pcmBytes = dataBytes ?: return FloatArray(0)
     val encoding = when {
       audioFormat == 3 && bitsPerSample == 32 -> AudioFormat.ENCODING_PCM_FLOAT
       bitsPerSample == 24 -> PCM_24BIT_ENCODING
       bitsPerSample == 8 -> AudioFormat.ENCODING_PCM_8BIT
       else -> AudioFormat.ENCODING_PCM_16BIT
     }
-    val slice = bytes.copyOfRange(dataStart, dataStart + dataSize)
-    val mono = pcmBytesToMonoFloat(slice, channels, encoding)
+    val mono = pcmBytesToMonoFloat(pcmBytes, channels, encoding)
     return resample(mono, sampleRate, TARGET_SAMPLE_RATE)
   }
 

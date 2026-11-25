@@ -31,7 +31,8 @@ export async function processNoteWithCactus(
   draftText: string,
   durationSec: number,
   savedAudioUri: string | null,
-  localDate = formatLocalDate()
+  localDate = formatLocalDate(),
+  options?: { existingTranscript?: string; skipStt?: boolean }
 ) {
   let heardText = '';
   let audioState: AudioState = 'none';
@@ -39,8 +40,9 @@ export async function processNoteWithCactus(
   let lastError: string | null = null;
 
   const cactusAvailable = isCactusAvailable();
+  const useExistingTranscript = Boolean(options?.skipStt && options.existingTranscript?.trim());
   let status: CactusStatus | null = null;
-  if (cactusAvailable && (savedAudioUri || draftText.trim())) {
+  if (cactusAvailable && (savedAudioUri || draftText.trim() || useExistingTranscript)) {
     try {
       status = await getCactusStatus();
     } catch (err) {
@@ -48,7 +50,11 @@ export async function processNoteWithCactus(
     }
   }
 
-  if (savedAudioUri && cactusAvailable) {
+  if (useExistingTranscript) {
+    heardText = options?.existingTranscript?.trim() ?? '';
+    audioState = savedAudioUri ? 'done' : 'none';
+    sttEngine = savedAudioUri ? 'whistle' : 'none';
+  } else if (savedAudioUri && cactusAvailable) {
     if (!status?.supported) {
       audioState = 'failed';
       sttEngine = 'none';
@@ -74,7 +80,9 @@ export async function processNoteWithCactus(
     }
   }
 
-  const finalTranscript = combineDraftAndTranscript(draftText, heardText);
+  const finalTranscript = useExistingTranscript
+    ? heardText
+    : combineDraftAndTranscript(draftText, heardText);
   let extracted = null;
 
   if (

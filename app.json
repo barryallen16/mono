@@ -31,7 +31,7 @@
       "package": "com.mono.voicelog",
       "permissions": ["android.permission.RECORD_AUDIO"],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#09318d"
       }
     },

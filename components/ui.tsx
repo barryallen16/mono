@@ -14,7 +14,7 @@ import {
   ViewProps,
 } from 'react-native';
 
-import { PixelIcon, PixelIconName } from './pixel-icon';
+import { MonoLogo, PixelIcon, PixelIconName } from './pixel-icon';
 
 export const tabularNums = StyleSheet.create({
   text: { fontVariant: ['tabular-nums'] },
@@ -143,10 +143,12 @@ export function Field({ className = '', multiline, onFocus, onBlur, ...rest }: F
 
 export function ScreenHeader({
   title,
+  titleNode,
   subtitle,
   right,
 }: {
-  title: string;
+  title?: string;
+  titleNode?: ReactNode;
   subtitle?: string;
   right?: ReactNode;
 }) {
@@ -154,7 +156,7 @@ export function ScreenHeader({
     <View className="border-b border-line bg-bg px-4 pb-3 pt-3">
       <View className="w-full max-w-2xl flex-row items-center justify-between gap-4 self-center">
         <View className="flex-1">
-          <Text className="font-pixel text-2xl tracking-wide text-ink">{title}</Text>
+          {titleNode ?? <Text className="font-pixel text-2xl tracking-wide text-ink">{title}</Text>}
           {subtitle ? <Text className="mt-1 font-mono text-xs text-muted">{subtitle}</Text> : null}
         </View>
         {right}
@@ -178,8 +180,10 @@ export function Brand({ subtitle = 'Speak once. Keep everything.' }: { subtitle?
       <View className="h-12 w-12 items-center justify-center rounded-md border border-accent bg-accent/15">
         <PixelIcon name="mic" size={24} color="#9d91cc" />
       </View>
-      <Text className="mt-4 font-pixel text-4xl tracking-wider text-ink">mono</Text>
-      <Text className="mt-1.5 font-mono text-sm leading-5 text-muted">{subtitle}</Text>
+      <View className="mt-4" accessibilityRole="header" accessibilityLabel="mono">
+        <MonoLogo height={34} color="#ffffff" />
+      </View>
+      <Text className="mt-2 font-mono text-sm leading-5 text-muted">{subtitle}</Text>
     </View>
   );
 }

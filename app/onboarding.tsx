@@ -8,9 +8,19 @@ import { Brand, Button, Panel } from '~/components/ui';
 import { prepareCactusModels } from '~/utils/cactus';
 import { markOnboardingSeen } from '~/utils/onboarding';
 
-function SpecRow({ icon, title, detail }: { icon: PixelIconName; title: string; detail: string }) {
+function SpecRow({
+  icon,
+  title,
+  detail,
+  isLast = false,
+}: {
+  icon: PixelIconName;
+  title: string;
+  detail: string;
+  isLast?: boolean;
+}) {
   return (
-    <View className="flex-row items-start gap-3 border-b border-line py-3 last:border-b-0">
+    <View className={`flex-row items-start gap-3 py-3 ${isLast ? '' : 'border-b border-line'}`}>
       <View className="mt-0.5">
         <PixelIcon name={icon} size={16} color="#9d91cc" />
       </View>
@@ -31,7 +41,11 @@ export default function Onboarding() {
     try {
       await markOnboardingSeen();
       prepareCactusModels().catch(() => {});
-      router.replace('/(tabs)');
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/(tabs)');
+      }
     } finally {
       setIsStarting(false);
     }
@@ -41,23 +55,24 @@ export default function Onboarding() {
     <SafeAreaView className="flex-1 bg-bg">
       <ScrollView contentContainerStyle={{ padding: 20, flexGrow: 1, justifyContent: 'center' }}>
         <View className="w-full max-w-md gap-6 self-center">
-          <Brand subtitle="Private offline voice log. Whistle transcribes speech and Needle 3 extracts tasks on your phone." />
+          <Brand subtitle="Private offline voice notes. Record a thought and get a title, summary, and todo list on your phone." />
 
           <Panel className="py-1">
             <SpecRow
               icon="mic"
-              title="Whistle speech-to-text"
-              detail="Record up to 2 minutes and transcribe audio locally on CPU."
+              title="Fast voice capture"
+              detail="Record up to 2 minutes per note and play clips back anytime."
             />
             <SpecRow
               icon="notes"
-              title="Needle 3 task extraction"
-              detail="Pulls out a title, summary, tags, and checkable todos automatically."
+              title="Automatic todos and tags"
+              detail="Pulls out a title, summary, tags, and checkable tasks locally."
             />
             <SpecRow
               icon="lock"
-              title="Zero cloud calls"
-              detail="Audio, transcripts, and weights stay on your device. Export or wipe anytime."
+              title="Private on your device"
+              detail="Audio, transcripts, and models stay on your phone. Export or wipe anytime."
+              isLast
             />
           </Panel>
 

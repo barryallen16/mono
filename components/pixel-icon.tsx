@@ -48,9 +48,30 @@ const PIXEL_PATHS = {
     'M8 14H7v6H5v-6H2v-2h6v2Zm5 6h-2V10h2v10Zm9-2h-3v2h-2v-2h-1v-2h6v2Zm-3-4h-2V4h2v10ZM7 10H5V4h2v6Zm6-4h2v2H9V6h2V4h2v2Z',
   ],
   'info-box': ['M4 2h16v2H4zm0 18h16v2H4zM2 4h2v16H2zm18 0h2v16h-2zm-9 5h2V7h-2zm0 8h2v-6h-2z'],
+  edit: [
+    'M16 2h4v2h-4zM20 4h2v4h-2zM14 4h2v2h-2zM12 6h2v2h-2zM10 8h2v2h-2zM8 10h2v2H8zM6 12h2v2H6zM4 14h2v2H4zM2 16h2v6H2zM4 20h4v2H4zM8 18h2v2H8zM10 16h2v2h-2zM12 14h2v2h-2zM14 12h2v2h-2zM16 10h2v2h-2zM18 8h2v2h-2zM14 6h2v2h-2zM16 8h2v2h-2z',
+  ],
+  refresh: [
+    'M6 4h10v2H6zM4 6h2v4H4zM14 2h2v2h-2zM16 4h2v2h-2zM14 6h2v2h-2zM8 18h10v2H8zM18 14h2v4h-2zM8 16h2v2H8zM6 18h2v2H6zM8 20h2v2H8z',
+  ],
 } as const;
 
 export type PixelIconName = keyof typeof PIXEL_PATHS;
+
+export function MonoLogo({ height = 20, color = '#ffffff' }: { height?: number; color?: string }) {
+  const width = Math.round((height * 53) / 20.5);
+  return (
+    <Svg width={width} height={height} viewBox="-0.5 -0.5 53 20.5" fill="none">
+      <Path
+        d="M11.1533 0.999624V18.0156H9.56925V2.65562H6.97725V18.0156H5.32125V2.65562H2.70525V18.0156H1.00125V0.999624H11.1533ZM24.1948 0.999624V18.0156H14.0428V0.999624H24.1948ZM15.8188 16.2396H22.5388V2.65562H15.8188V16.2396ZM37.2364 0.999624V18.0156H35.6524V2.65562H28.7884V18.0156H27.0844V0.999624H37.2364ZM50.2779 0.999624V18.0156H40.1259V0.999624H50.2779ZM41.9019 16.2396H48.6219V2.65562H41.9019V16.2396Z"
+        fill={color}
+        stroke={color}
+        strokeWidth={2}
+        strokeLinejoin="miter"
+      />
+    </Svg>
+  );
+}
 
 export function PixelIcon({
   name,

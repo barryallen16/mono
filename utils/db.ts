@@ -84,66 +84,24 @@ export async function listNotes(): Promise<MonoNote[]> {
   return rows.map(rowToNote);
 }
 
-export async function createNote(
-  transcript: string,
-  durationSec = 0,
-  tempAudioUri: string | null = null
-): Promise<MonoNote> {
-  const savedAudioUri = await persistAudioClip(tempAudioUri);
-  const db = await getSQLiteDatabase();
+const inFlightProcessing = new Map<number, Promise<MonoNote | null>>();
 
-  if (!db) {
-    try {
-      return webStore.create(transcript, durationSec, savedAudioUri);
-    } catch (err) {
-      if (savedAudioUri && savedAudioUri !== tempAudioUri) {
-        await discardTempAudioClip(savedAudioUri);
-      }
-      throw err;
-    }
-  }
+function escapeSqlLike(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&');
+}
 
-  const localDate = formatLocalDate();
-  const createdAt = new Date().toISOString();
-
-  try {
-    const fields = await processNoteWithCactus(transcript, durationSec, savedAudioUri, localDate);
-    const result = await db.runAsync(
-      `INSERT INTO notes (
-        title, transcript, summary, tags_json, action_items_json,
-        duration_sec, audio_uri, audio_state, stt_engine, extract_engine,
-        extract_confidence, last_error, local_date, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      fields.title,
-      fields.transcript,
-      fields.summary,
-      JSON.stringify(fields.tags),
-      JSON.stringify(fields.actionItems),
-      durationSec,
-      savedAudioUri,
-      fields.audioState,
-      fields.sttEngine,
-      fields.extractEngine,
-      fields.extractConfidence,
-      fields.lastError,
-      localDate,
-      createdAt
-    );
-
-    const row = await db.getFirstAsync<NoteRow>(
-      'SELECT * FROM notes WHERE id = ?',
-      result.lastInsertRowId
-    );
-    if (!row) {
-      throw new Error('Failed to read saved note');
-    }
-    return rowToNote(row);
-  } catch (err) {
-    if (savedAudioUri && savedAudioUri !== tempAudioUri) {
-      await discardTempAudioClip(savedAudioUri);
-    }
-    throw err;
-  }
+function mergeDoneFlags(
+  nextItems: MonoNote['actionItems'],
+  existingItems: MonoNote['actionItems']
+): MonoNote['actionItems'] {
+  if (existingItems.length === 0) return nextItems;
+  const doneTexts = new Set(
+    existingItems.filter((item) => item.done).map((item) => item.text.trim().toLowerCase())
+  );
+  if (doneTexts.size === 0) return nextItems;
+  return nextItems.map((item) =>
+    doneTexts.has(item.text.trim().toLowerCase()) ? { ...item, done: true } : item
+  );
 }
 
 export async function createQuickNote(
@@ -219,62 +177,114 @@ export async function createQuickNote(
   }
 }
 
-export async function processSavedNote(noteId: number, draftText = ''): Promise<MonoNote | null> {
-  const db = await getSQLiteDatabase();
+export function processSavedNote(noteId: number, draftText = ''): Promise<MonoNote | null> {
+  const existingRun = inFlightProcessing.get(noteId);
+  if (existingRun) return existingRun;
 
-  if (!db) {
-    const target = webStore.list().find((n) => n.id === noteId);
-    if (!target) return null;
+  const run = (async (): Promise<MonoNote | null> => {
+    const db = await getSQLiteDatabase();
+
+    if (!db) {
+      const target = webStore.list().find((n) => n.id === noteId);
+      if (!target) return null;
+      const hasExistingTranscript =
+        target.audioState === 'done' && Boolean(target.transcript.trim());
+      const effectiveDraft = draftText.trim()
+        ? draftText
+        : target.sttEngine === 'none'
+          ? target.transcript
+          : '';
+      const fields = await processNoteWithCactus(
+        effectiveDraft,
+        target.durationSec,
+        target.audioUri,
+        target.localDate,
+        hasExistingTranscript ? { skipStt: true, existingTranscript: target.transcript } : undefined
+      );
+      const latest = webStore.list().find((n) => n.id === noteId);
+      if (!latest) return null;
+      const userEdited =
+        latest.title !== target.title ||
+        latest.transcript !== target.transcript ||
+        JSON.stringify(latest.tags) !== JSON.stringify(target.tags);
+      return webStore.update(noteId, {
+        ...(userEdited
+          ? {}
+          : {
+              title: fields.title,
+              transcript: fields.transcript,
+              summary: fields.summary,
+              tags: fields.tags,
+              actionItems: mergeDoneFlags(fields.actionItems, latest.actionItems),
+            }),
+        audioState: fields.audioState,
+        sttEngine: fields.sttEngine,
+        extractEngine: fields.extractEngine,
+        extractConfidence: fields.extractConfidence,
+        lastError: fields.lastError,
+      });
+    }
+
+    const row = await db.getFirstAsync<NoteRow>('SELECT * FROM notes WHERE id = ?', noteId);
+    if (!row) return null;
+    const note = rowToNote(row);
+    const hasExistingTranscript = note.audioState === 'done' && Boolean(note.transcript.trim());
     const effectiveDraft = draftText.trim()
       ? draftText
-      : target.sttEngine === 'none'
-        ? target.transcript
+      : note.sttEngine === 'none'
+        ? note.transcript
         : '';
+
     const fields = await processNoteWithCactus(
       effectiveDraft,
-      target.durationSec,
-      target.audioUri,
-      target.localDate
+      note.durationSec,
+      note.audioUri,
+      note.localDate,
+      hasExistingTranscript ? { skipStt: true, existingTranscript: note.transcript } : undefined
     );
-    return webStore.update(noteId, fields);
-  }
 
-  const row = await db.getFirstAsync<NoteRow>('SELECT * FROM notes WHERE id = ?', noteId);
-  if (!row) return null;
-  const note = rowToNote(row);
-  const effectiveDraft = draftText.trim()
-    ? draftText
-    : note.sttEngine === 'none'
-      ? note.transcript
-      : '';
+    const latestRow = await db.getFirstAsync<NoteRow>('SELECT * FROM notes WHERE id = ?', noteId);
+    if (!latestRow) return null;
+    const latest = rowToNote(latestRow);
+    const userEdited =
+      latest.title !== note.title ||
+      latest.transcript !== note.transcript ||
+      JSON.stringify(latest.tags) !== JSON.stringify(note.tags);
 
-  const fields = await processNoteWithCactus(
-    effectiveDraft,
-    note.durationSec,
-    note.audioUri,
-    note.localDate
-  );
+    const nextTitle = userEdited ? latest.title : fields.title;
+    const nextTranscript = userEdited ? latest.transcript : fields.transcript;
+    const nextSummary = userEdited ? latest.summary : fields.summary;
+    const nextTags = userEdited ? latest.tags : fields.tags;
+    const nextActions = userEdited
+      ? latest.actionItems
+      : mergeDoneFlags(fields.actionItems, latest.actionItems);
 
-  await db.runAsync(
-    `UPDATE notes
-     SET title = ?, transcript = ?, summary = ?, tags_json = ?, action_items_json = ?,
-         audio_state = ?, stt_engine = ?, extract_engine = ?, extract_confidence = ?, last_error = ?
-     WHERE id = ?`,
-    fields.title,
-    fields.transcript,
-    fields.summary,
-    JSON.stringify(fields.tags),
-    JSON.stringify(fields.actionItems),
-    fields.audioState,
-    fields.sttEngine,
-    fields.extractEngine,
-    fields.extractConfidence,
-    fields.lastError,
-    noteId
-  );
+    await db.runAsync(
+      `UPDATE notes
+       SET title = ?, transcript = ?, summary = ?, tags_json = ?, action_items_json = ?,
+           audio_state = ?, stt_engine = ?, extract_engine = ?, extract_confidence = ?, last_error = ?
+       WHERE id = ?`,
+      nextTitle,
+      nextTranscript,
+      nextSummary,
+      JSON.stringify(nextTags),
+      JSON.stringify(nextActions),
+      fields.audioState,
+      fields.sttEngine,
+      fields.extractEngine,
+      fields.extractConfidence,
+      fields.lastError,
+      noteId
+    );
 
-  const updated = await db.getFirstAsync<NoteRow>('SELECT * FROM notes WHERE id = ?', noteId);
-  return updated ? rowToNote(updated) : null;
+    const updated = await db.getFirstAsync<NoteRow>('SELECT * FROM notes WHERE id = ?', noteId);
+    return updated ? rowToNote(updated) : null;
+  })().finally(() => {
+    inFlightProcessing.delete(noteId);
+  });
+
+  inFlightProcessing.set(noteId, run);
+  return run;
 }
 
 export async function updateNote(
@@ -368,15 +378,17 @@ export async function searchNotes(query: string, tag = 'all'): Promise<MonoNote[
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
   for (const term of terms) {
+    const rawTerm = term.startsWith('#') && term.length > 1 ? term.slice(1) : term;
+    const escaped = escapeSqlLike(rawTerm);
     conditions.push(
-      "LOWER(title || ' ' || summary || ' ' || transcript || ' ' || tags_json || ' ' || action_items_json) LIKE ?"
+      "LOWER(title || ' ' || summary || ' ' || transcript || ' ' || tags_json || ' ' || action_items_json) LIKE ? ESCAPE '\\'"
     );
-    params.push(`%${term}%`);
+    params.push(`%${escaped}%`);
   }
 
   if (tag !== 'all') {
-    conditions.push('tags_json LIKE ?');
-    params.push(`%"${tag}"%`);
+    conditions.push("tags_json LIKE ? ESCAPE '\\'");
+    params.push(`%"${escapeSqlLike(tag)}"%`);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -384,5 +396,7 @@ export async function searchNotes(query: string, tag = 'all'): Promise<MonoNote[
     `SELECT * FROM notes ${whereClause} ORDER BY id DESC`,
     ...params
   );
-  return rows.map(rowToNote);
+  const candidates = rows.map(rowToNote);
+  const exact = filterNotes(candidates, query);
+  return tag === 'all' ? exact : exact.filter((note) => note.tags.includes(tag));
 }

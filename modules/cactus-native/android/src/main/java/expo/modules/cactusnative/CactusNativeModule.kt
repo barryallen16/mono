@@ -142,7 +142,6 @@ class CactusNativeModule : Module() {
 
   private val downloadMutexes = MODEL_SPECS.associate { it.id to Mutex() }
   private val inferenceMutex = Mutex()
-  private val cacheWriteMutex = Mutex()
   private var initializedDate: String? = null
 
   private fun cacheDir(): File = File(context.filesDir, "cactus").apply { mkdirs() }
@@ -294,9 +293,11 @@ class CactusNativeModule : Module() {
     }
     for (spec in MODEL_SPECS) {
       if (spec.id !in specIds) continue
-      if ((CactusBridge.nativeLoadedModelsMask() and spec.maskBit) != 0) continue
+      val loadedAlready = (CactusBridge.nativeLoadedModelsMask() and spec.maskBit) != 0
+      if (loadedAlready && isCachedComplete(spec)) continue
       downloadMutexes.getValue(spec.id).withLock {
-        if ((CactusBridge.nativeLoadedModelsMask() and spec.maskBit) != 0) return@withLock
+        val stillLoaded = (CactusBridge.nativeLoadedModelsMask() and spec.maskBit) != 0
+        if (stillLoaded && isCachedComplete(spec)) return@withLock
         val file = withContext(Dispatchers.IO) { downloadModelIfNeeded(spec) }
         inferenceMutex.withLock {
           if ((CactusBridge.nativeLoadedModelsMask() and spec.maskBit) != 0) return@withLock
@@ -314,6 +315,16 @@ class CactusNativeModule : Module() {
           withContext(Dispatchers.IO) {
             CactusBridge.loadModel(file.absolutePath)
           }
+          sendEvent(
+            "onModelProgress",
+            mapOf(
+              "model" to spec.id,
+              "phase" to "ready",
+              "progress" to 1.0,
+              "receivedBytes" to fileSize,
+              "totalBytes" to fileSize
+            )
+          )
         }
       }
     }
@@ -334,19 +345,17 @@ class CactusNativeModule : Module() {
     }
 
     AsyncFunction("clearModels") Coroutine { ->
-      cacheWriteMutex.withLock {
-        downloadMutexes.getValue("whistle").withLock {
-          downloadMutexes.getValue("needle3").withLock {
-            inferenceMutex.withLock {
-              withContext(Dispatchers.IO) {
-                cacheDir().listFiles()?.forEach { it.delete() }
-                for (spec in MODEL_SPECS) {
-                  modelFile(spec).delete()
-                  partFile(spec).delete()
-                }
-                initializedDate = null
-                buildStatusMap()
+      downloadMutexes.getValue("whistle").withLock {
+        downloadMutexes.getValue("needle3").withLock {
+          inferenceMutex.withLock {
+            withContext(Dispatchers.IO) {
+              cacheDir().listFiles()?.forEach { it.delete() }
+              for (spec in MODEL_SPECS) {
+                modelFile(spec).delete()
+                partFile(spec).delete()
               }
+              initializedDate = null
+              buildStatusMap()
             }
           }
         }

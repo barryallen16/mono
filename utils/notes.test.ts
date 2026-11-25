@@ -546,3 +546,22 @@ describe('Extraction eval set (15 voice logs)', () => {
     });
   }
 });
+
+describe('filterNotes tag query matching', () => {
+  it('matches #tag terms against note.tags and literal wildcards without false positives', () => {
+    const store = createMemoryNoteStore(createFakeStorage());
+    const bugNote = store.create('Crash when saving offline clip');
+    const studyNote = store.create('Read paper about audio resampling');
+
+    const all = store.list();
+    assert.deepEqual(
+      filterNotes(all, '#bug').map((n) => n.id),
+      [bugNote.id]
+    );
+    assert.deepEqual(
+      filterNotes(all, '#study audio').map((n) => n.id),
+      [studyNote.id]
+    );
+    assert.deepEqual(filterNotes(all, '%'), []);
+  });
+});

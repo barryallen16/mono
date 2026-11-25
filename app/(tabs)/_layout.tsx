@@ -37,21 +37,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="Chat"
+        name="notes"
         options={{
-          title: 'Search',
-          tabBarIcon: ({ color }) => <PixelIcon name="search" size={24} color={color} />,
+          title: 'Notes',
+          tabBarIcon: ({ color }) => <PixelIcon name="notes" size={24} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="Activity"
-        options={{
-          title: 'Streak',
-          tabBarIcon: ({ color }) => <PixelIcon name="zap" size={24} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
+        name="vault"
         options={{
           title: 'Vault',
           tabBarIcon: ({ color }) => <PixelIcon name="archive" size={24} color={color} />,
