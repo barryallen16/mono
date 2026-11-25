@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import { extractStructuredNote } from './extract';
 import {
+  ALLOWED_NOTE_TAGS,
   buildNoteFields,
   combineDraftAndTranscript,
   computeStreak,
@@ -12,6 +13,7 @@ import {
   formatLocalDate,
   KeyValueStorage,
   mergeCactusNoteFields,
+  mergeChunkTranscripts,
   MonoNote,
 } from './notes';
 
@@ -84,6 +86,11 @@ describe('computeStreak and formatters', () => {
         actionItems: [],
         durationSec: 3,
         audioUri: null,
+        audioState: 'none',
+        sttEngine: 'none',
+        extractEngine: 'none',
+        extractConfidence: null,
+        lastError: null,
         localDate: formatLocalDate(d),
         createdAt: d.toISOString(),
       };
@@ -224,5 +231,318 @@ describe('Cactus Whistle + Needle 3 field helpers', () => {
     assert.equal(fallback.title, 'Todo: fix login crash tomorrow.');
     assert.ok(fallback.tags.includes('todo'));
     assert.ok(fallback.tags.includes('bug'));
+    assert.equal(fallback.extractEngine, 'regex');
+    assert.equal(fallback.extractConfidence, null);
   });
+
+  it('filters Needle 3 tags to ALLOWED_NOTE_TAGS and preserves confidence', () => {
+    const merged = mergeCactusNoteFields('Quiet afternoon walk', 0, null, {
+      matched: true,
+      title: 'Afternoon walk',
+      summary: 'Short break outside.',
+      tags: ['  SHIP ', 'random-slop', 'IDEA', 'work'],
+      actionItems: [],
+      confidence: 0.87,
+    });
+    assert.deepEqual(merged.tags, ['ship', 'idea']);
+    assert.ok(merged.tags.every((t) => (ALLOWED_NOTE_TAGS as readonly string[]).includes(t)));
+    assert.equal(merged.extractEngine, 'needle3');
+    assert.equal(merged.extractConfidence, 0.87);
+
+    const fallbackTags = mergeCactusNoteFields('Need to fix crash tomorrow', 0, null, {
+      matched: true,
+      title: 'Fix crash',
+      summary: 'Crash needs fixing.',
+      tags: ['unsupported', 'misc'],
+      actionItems: [],
+      confidence: 0.42,
+    });
+    assert.deepEqual(fallbackTags.tags, ['bug', 'todo']);
+    assert.equal(fallbackTags.extractConfidence, 0.42);
+  });
+
+  it('returns extractEngine none for empty voice memo', () => {
+    const emptyMemo = mergeCactusNoteFields('   ', 9, 'file:///clip.m4a', {
+      matched: true,
+      title: 'Ignored',
+      summary: 'Ignored',
+      tags: ['bug'],
+      actionItems: ['Ignored'],
+      confidence: 0.9,
+    });
+    assert.equal(emptyMemo.title, 'Voice memo (00:09)');
+    assert.equal(emptyMemo.extractEngine, 'none');
+    assert.equal(emptyMemo.extractConfidence, null);
+  });
+});
+
+describe('mergeChunkTranscripts', () => {
+  it('handles empty arrays, blank chunks, and single chunks', () => {
+    assert.equal(mergeChunkTranscripts([]), '');
+    assert.equal(mergeChunkTranscripts(['   ', '']), '');
+    assert.equal(mergeChunkTranscripts(['  Single chunk note  ']), 'Single chunk note');
+  });
+
+  it('deduplicates 1-6 overlapping boundary words across consecutive chunks', () => {
+    assert.equal(
+      mergeChunkTranscripts(['Fix the login crash', 'crash before release']),
+      'Fix the login crash before release'
+    );
+    assert.equal(
+      mergeChunkTranscripts([
+        'Remember to verify the SQLite migration script',
+        'the sqlite migration script. Then run tests',
+      ]),
+      'Remember to verify the SQLite migration script. Then run tests'
+    );
+    assert.equal(
+      mergeChunkTranscripts([
+        'one two three four five six seven',
+        'two three four five six seven eight',
+        '',
+        'seven eight nine',
+      ]),
+      'one two three four five six seven eight nine'
+    );
+  });
+});
+
+describe('createMemoryNoteStore pending, update, and legacy normalization', () => {
+  it('creates pending voice notes and updates fields cleanly', () => {
+    const storage = createFakeStorage();
+    const store = createMemoryNoteStore(storage);
+
+    const pending = store.createPending('draft context', 15, 'file:///voice.m4a');
+    assert.equal(pending.audioState, 'pending');
+    assert.equal(pending.title, 'Voice note (pending)');
+    assert.equal(pending.transcript, 'draft context');
+    assert.equal(pending.sttEngine, 'none');
+    assert.equal(pending.extractEngine, 'none');
+
+    const textQuick = store.createPending('Todo: deploy build', 0, null);
+    assert.equal(textQuick.audioState, 'none');
+    assert.equal(textQuick.extractEngine, 'regex');
+    assert.ok(textQuick.tags.includes('ship'));
+
+    const updated = store.update(pending.id, {
+      title: 'Updated title',
+      audioState: 'done',
+      sttEngine: 'whistle',
+      extractEngine: 'needle3',
+      extractConfidence: 0.91,
+      lastError: null,
+    });
+    assert.equal(updated?.title, 'Updated title');
+    assert.equal(updated?.audioState, 'done');
+    assert.equal(updated?.sttEngine, 'whistle');
+    assert.equal(updated?.extractEngine, 'needle3');
+    assert.equal(updated?.extractConfidence, 0.91);
+    assert.equal(store.update(999999, { title: 'Missing' }), null);
+
+    const reloaded = createMemoryNoteStore(storage)
+      .list()
+      .find((n) => n.id === pending.id);
+    assert.equal(reloaded?.title, 'Updated title');
+    assert.equal(reloaded?.extractConfidence, 0.91);
+  });
+
+  it('defaults the 5 new metadata fields on legacy stored entries', () => {
+    const storage = createFakeStorage();
+    storage.setItem(
+      'mono_notes_v1',
+      JSON.stringify([
+        {
+          id: 42,
+          title: 'Legacy note',
+          transcript: 'Old note',
+          summary: 'Old note',
+          tags: ['log'],
+          actionItems: [],
+          durationSec: 0,
+          audioUri: null,
+          localDate: '2026-10-01',
+          createdAt: '2026-10-01T10:00:00.000Z',
+        },
+      ])
+    );
+
+    const [note] = createMemoryNoteStore(storage).list();
+    assert.equal(note.audioState, 'none');
+    assert.equal(note.sttEngine, 'none');
+    assert.equal(note.extractEngine, 'none');
+    assert.equal(note.extractConfidence, null);
+    assert.equal(note.lastError, null);
+  });
+});
+
+describe('Extraction eval set (15 voice logs)', () => {
+  const cases: {
+    name: string;
+    transcript: string;
+    audioUri?: string | null;
+    durationSec?: number;
+    cactus?: Parameters<typeof mergeCactusNoteFields>[3];
+    expectedTags: string[];
+    minActions?: number;
+    exactActions?: number;
+    expectedEngine?: 'needle3' | 'regex' | 'none';
+  }[] = [
+    {
+      name: '1. crash bug report with todo',
+      transcript:
+        'Uh yeah the Android audio player crashes on cold start. Need to remove the 1s timeout.',
+      audioUri: 'file:///1.m4a',
+      expectedTags: ['voice', 'bug'],
+      minActions: 1,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '2. multi-item grocery and work todo',
+      transcript:
+        'Todo: buy USB-C cable for test phone. Must update the EAS build profile before 5pm.',
+      expectedTags: ['todo', 'ship'],
+      minActions: 2,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '3. shipping release log',
+      transcript: 'Just pushed the commit and launched preview build 14 to internal testers.',
+      expectedTags: ['ship'],
+      exactActions: 0,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '4. meeting debrief with follow-up',
+      transcript:
+        'Synced with Priya about the offline vault flow. Remember to email her the schema diff.',
+      expectedTags: ['people', 'todo'],
+      minActions: 1,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '5. paper study note',
+      transcript: 'Reading the Whisper distillation paper tonight to study chunk boundary overlap.',
+      expectedTags: ['study'],
+      exactActions: 0,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '6. product idea brainstorm',
+      transcript: 'What if we explore a one-tap retry chip on pending voice notes when offline?',
+      expectedTags: ['idea'],
+      exactActions: 0,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '7. rambling multi-sentence mixed voice log',
+      transcript:
+        'Okay quick note while walking. The search tab had a bug where tags were filtered in memory instead of SQL. Gotta fix that and deploy before tomorrow morning. Also talk to Sam about test fixtures.',
+      audioUri: 'file:///7.m4a',
+      expectedTags: ['voice', 'bug', 'ship', 'people'],
+      minActions: 1,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '8. empty voice memo',
+      transcript: '   ',
+      audioUri: 'file:///8.m4a',
+      durationSec: 6,
+      expectedTags: ['voice'],
+      exactActions: 0,
+      expectedEngine: 'none',
+    },
+    {
+      name: '9. punctuation-only noise',
+      transcript: '... --- ! ?',
+      expectedTags: ['log'],
+      exactActions: 0,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '10. no-todo daily reflection',
+      transcript:
+        'Slept well, drank black coffee, and spent an hour sketching icons in my notebook.',
+      expectedTags: ['log'],
+      exactActions: 0,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '11. debug error investigation',
+      transcript:
+        'Seeing a JSON parse error when reading corrupted rows. Have to guard parseJsonArray.',
+      expectedTags: ['bug'],
+      minActions: 1,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '12. interview debrief',
+      transcript: 'Finished the user interview. Should ping Maya tomorrow with the prototype link.',
+      expectedTags: ['people', 'todo'],
+      minActions: 1,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '13. release checklist reminder',
+      transcript: "Don't forget to verify PR #42 and run bun test before we ship.",
+      expectedTags: ['ship', 'todo'],
+      exactActions: 0,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '14. study concept with todo',
+      transcript: 'Need to watch the SQLite FTS5 talk and learn how prefix indexes work.',
+      expectedTags: ['todo', 'study'],
+      minActions: 1,
+      expectedEngine: 'regex',
+    },
+    {
+      name: '15. needle3 structured override with tag sanitization',
+      transcript: 'Talked with Alex about launch timing and fixing the export crash.',
+      audioUri: 'file:///15.m4a',
+      cactus: {
+        matched: true,
+        title: 'Launch timing & export crash',
+        summary: 'Discussed launch timing with Alex and export crash fix.',
+        tags: ['People', 'BUG', 'invalid-tag'],
+        actionItems: ['Fix export crash', 'Confirm launch date with Alex'],
+        confidence: 0.93,
+      },
+      expectedTags: ['voice', 'people', 'bug'],
+      exactActions: 2,
+      expectedEngine: 'needle3',
+    },
+  ];
+
+  for (const evalCase of cases) {
+    it(evalCase.name, () => {
+      const direct = extractStructuredNote(evalCase.transcript);
+      assert.ok(direct.tags.length >= 1);
+
+      const merged = mergeCactusNoteFields(
+        evalCase.transcript,
+        evalCase.durationSec ?? 10,
+        evalCase.audioUri ?? null,
+        evalCase.cactus ?? null
+      );
+
+      for (const expectedTag of evalCase.expectedTags) {
+        assert.ok(
+          merged.tags.includes(expectedTag),
+          `Expected tag "${expectedTag}" in [${merged.tags.join(', ')}]`
+        );
+      }
+      if (evalCase.minActions !== undefined) {
+        assert.ok(
+          merged.actionItems.length >= evalCase.minActions,
+          `Expected at least ${evalCase.minActions} actions, got ${merged.actionItems.length}`
+        );
+      }
+      if (evalCase.exactActions !== undefined) {
+        assert.equal(merged.actionItems.length, evalCase.exactActions);
+      }
+      if (evalCase.expectedEngine !== undefined) {
+        assert.equal(merged.extractEngine, evalCase.expectedEngine);
+      }
+    });
+  }
 });

@@ -12,7 +12,10 @@ export interface ExtractedNote {
 }
 
 const TAG_RULES: [RegExp, string][] = [
-  [/\b(bug|fix|error|crash|broken|issue|debug)\b/i, 'bug'],
+  [
+    /\b(bugs?|fix(?:es|ed|ing)?|errors?|crash(?:es|ed|ing)?|broken|issues?|debug(?:ging)?)\b/i,
+    'bug',
+  ],
   [/\b(ship|deploy|release|build|launch|pr|commit)\b/i, 'ship'],
   [/\b(idea|maybe|could|what if|concept|explore)\b/i, 'idea'],
   [/\b(meet|call|sync|talk|email|ping|interview)\b/i, 'people'],

@@ -1,4 +1,10 @@
-import { combineDraftAndTranscript, formatLocalDate, mergeCactusNoteFields } from './notes';
+import {
+  AudioState,
+  combineDraftAndTranscript,
+  formatLocalDate,
+  mergeCactusNoteFields,
+  SttEngine,
+} from './notes';
 
 import {
   CactusProgressEvent,
@@ -28,25 +34,71 @@ export async function processNoteWithCactus(
   localDate = formatLocalDate()
 ) {
   let heardText = '';
-  if (savedAudioUri && isCactusAvailable()) {
+  let audioState: AudioState = 'none';
+  let sttEngine: SttEngine = 'none';
+  let lastError: string | null = null;
+
+  const cactusAvailable = isCactusAvailable();
+  let status: CactusStatus | null = null;
+  if (cactusAvailable && (savedAudioUri || draftText.trim())) {
     try {
-      const stt = await transcribeWithWhistle(savedAudioUri, null);
-      heardText = stt?.text ?? '';
-    } catch {
-      heardText = '';
+      status = await getCactusStatus();
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : 'Failed to inspect Cactus runtime.';
+    }
+  }
+
+  if (savedAudioUri && cactusAvailable) {
+    if (!status?.supported) {
+      audioState = 'failed';
+      sttEngine = 'none';
+      if (!lastError) {
+        lastError = 'On-device speech requires ARM Android.';
+      }
+    } else if (!status.whistleCached && !status.whistleLoaded) {
+      audioState = 'pending';
+      sttEngine = 'none';
+      lastError = 'Speech model not downloaded yet. Tap Retry once cached.';
+    } else {
+      try {
+        const stt = await transcribeWithWhistle(savedAudioUri, 'en');
+        heardText = stt?.text ?? '';
+        audioState = 'done';
+        sttEngine = 'whistle';
+      } catch (err) {
+        heardText = '';
+        audioState = 'failed';
+        sttEngine = 'none';
+        lastError = err instanceof Error ? err.message : 'Speech transcription failed.';
+      }
     }
   }
 
   const finalTranscript = combineDraftAndTranscript(draftText, heardText);
   let extracted = null;
 
-  if (finalTranscript && isCactusAvailable()) {
+  if (
+    finalTranscript &&
+    cactusAvailable &&
+    status?.supported &&
+    (status.needleCached || status.needleLoaded)
+  ) {
     try {
       extracted = await extractWithNeedle3(finalTranscript, localDate);
-    } catch {
+    } catch (err) {
       extracted = null;
+      if (!lastError) {
+        lastError = err instanceof Error ? err.message : 'Structured extraction failed.';
+      }
     }
   }
 
-  return mergeCactusNoteFields(finalTranscript, durationSec, savedAudioUri, extracted);
+  const merged = mergeCactusNoteFields(finalTranscript, durationSec, savedAudioUri, extracted);
+
+  return {
+    ...merged,
+    audioState,
+    sttEngine,
+    lastError,
+  };
 }

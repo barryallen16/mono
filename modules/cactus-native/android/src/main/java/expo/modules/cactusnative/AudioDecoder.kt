@@ -10,11 +10,17 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.sin
 
 internal object AudioDecoder {
   const val TARGET_SAMPLE_RATE = 16000
   private const val PCM_24BIT_ENCODING = 21
+  private const val SINC_ZERO_CROSSINGS = 8.0
 
   fun decodeToMono16k(context: Context, uriString: String): FloatArray {
     val uri = Uri.parse(uriString)
@@ -138,7 +144,7 @@ internal object AudioDecoder {
       }
 
       val mono = pcmBytesToMonoFloat(rawPcm.toByteArray(), channelCount, pcmEncoding)
-      return resampleLinear(mono, sampleRate, TARGET_SAMPLE_RATE)
+      return resample(mono, sampleRate, TARGET_SAMPLE_RATE)
     } finally {
       extractor.release()
     }
@@ -196,7 +202,7 @@ internal object AudioDecoder {
     }
     val slice = bytes.copyOfRange(dataStart, dataStart + dataSize)
     val mono = pcmBytesToMonoFloat(slice, channels, encoding)
-    return resampleLinear(mono, sampleRate, TARGET_SAMPLE_RATE)
+    return resample(mono, sampleRate, TARGET_SAMPLE_RATE)
   }
 
   private fun pcmBytesToMonoFloat(bytes: ByteArray, channels: Int, encoding: Int): FloatArray {
@@ -253,16 +259,45 @@ internal object AudioDecoder {
     }
   }
 
-  private fun resampleLinear(input: FloatArray, srcRate: Int, dstRate: Int): FloatArray {
-    if (input.isEmpty() || srcRate <= 0 || srcRate == dstRate) return input
+  private fun resample(input: FloatArray, srcRate: Int, dstRate: Int): FloatArray {
+    if (input.isEmpty() || srcRate <= 0 || dstRate <= 0 || srcRate == dstRate) return input
     val ratio = srcRate.toDouble() / dstRate.toDouble()
     val outLength = ((input.size.toDouble() / ratio).toInt()).coerceAtLeast(1)
+
+    if (srcRate < dstRate) {
+      return FloatArray(outLength) { i ->
+        val srcPos = i * ratio
+        val idx = floor(srcPos).toInt().coerceIn(0, input.size - 1)
+        val nextIdx = (idx + 1).coerceAtMost(input.size - 1)
+        val frac = (srcPos - idx).toFloat()
+        input[idx] * (1f - frac) + input[nextIdx] * frac
+      }
+    }
+
+    val cutoff = dstRate.toDouble() / srcRate.toDouble()
+    val windowSupport = SINC_ZERO_CROSSINGS / cutoff
+    val halfWidth = ceil(windowSupport).toInt()
+    val lastIdx = input.size - 1
+
     return FloatArray(outLength) { i ->
-      val srcPos = i * ratio
-      val idx = floor(srcPos).toInt().coerceIn(0, input.size - 1)
-      val nextIdx = (idx + 1).coerceAtMost(input.size - 1)
-      val frac = (srcPos - idx).toFloat()
-      input[idx] * (1f - frac) + input[nextIdx] * frac
+      val center = i * ratio
+      val start = (floor(center).toInt() - halfWidth).coerceAtLeast(0)
+      val end = (ceil(center).toInt() + halfWidth).coerceAtMost(lastIdx)
+      var sum = 0.0
+      var weightSum = 0.0
+
+      for (j in start..end) {
+        val dx = j - center
+        if (abs(dx) >= windowSupport) continue
+        val hann = 0.5 * (1.0 + cos(PI * dx / windowSupport))
+        val arg = PI * cutoff * dx
+        val sinc = if (abs(arg) < 1e-8) 1.0 else sin(arg) / arg
+        val w = sinc * hann
+        sum += input[j] * w
+        weightSum += w
+      }
+
+      if (weightSum > 0.0) (sum / weightSum).toFloat().coerceIn(-1f, 1f) else 0f
     }
   }
 }

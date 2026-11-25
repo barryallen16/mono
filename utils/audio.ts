@@ -1,6 +1,8 @@
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
-import { Platform } from 'react-native';
+import { Platform, Share } from 'react-native';
+
+import { formatLocalDate, MonoNote } from './notes';
 
 const RECORDINGS_SUBDIR = 'recordings/';
 
@@ -87,7 +89,6 @@ export async function startAudioPlayback(
   let pollId: ReturnType<typeof setInterval> | null = null;
   let sound: Audio.Sound | null = null;
   let hasStarted = false;
-  let startedAt = Date.now();
 
   const cleanup = async () => {
     if (settled) return;
@@ -153,7 +154,7 @@ export async function startAudioPlayback(
       return;
     }
 
-    if (!status.isPlaying && (hasStarted || Date.now() - startedAt > 1000)) {
+    if (!status.isPlaying && hasStarted) {
       stop();
       return;
     }
@@ -166,7 +167,6 @@ export async function startAudioPlayback(
   };
 
   try {
-    startedAt = Date.now();
     const created = await Audio.Sound.createAsync({ uri }, { shouldPlay: true }, handleStatus);
     if (token !== activeToken || settled) {
       await created.sound.stopAsync().catch(() => {});
@@ -174,7 +174,6 @@ export async function startAudioPlayback(
       await cleanup();
       return stop;
     }
-    startedAt = Date.now();
     sound = created.sound;
 
     if (Platform.OS === 'web') {
@@ -192,4 +191,54 @@ export async function startAudioPlayback(
   }
 
   return stop;
+}
+
+export async function exportNotesToFile(
+  notes: MonoNote[]
+): Promise<'saved' | 'shared' | 'downloaded' | 'cancelled'> {
+  const payload = JSON.stringify(notes, null, 2);
+
+  if (Platform.OS === 'web' && typeof document !== 'undefined') {
+    const blob = new Blob([payload], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'mono-export.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return 'downloaded';
+  }
+
+  if (Platform.OS === 'android' && FileSystem.StorageAccessFramework) {
+    try {
+      const permissions =
+        await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (!permissions.granted) {
+        return 'cancelled';
+      }
+      const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
+        permissions.directoryUri,
+        `mono-export-${formatLocalDate()}`,
+        'application/json'
+      );
+      await FileSystem.writeAsStringAsync(fileUri, payload);
+      return 'saved';
+    } catch {
+      // Fall through to cache file + system Share sheet when SAF is unavailable.
+    }
+  }
+
+  const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+  const fileUri = baseDir ? `${baseDir}mono-export.json` : undefined;
+  if (fileUri) {
+    await FileSystem.writeAsStringAsync(fileUri, payload);
+  }
+  await Share.share({
+    title: 'mono-export.json',
+    ...(fileUri ? { url: fileUri } : {}),
+    message: payload.length < 100000 || !fileUri ? payload : fileUri,
+  });
+  return 'shared';
 }

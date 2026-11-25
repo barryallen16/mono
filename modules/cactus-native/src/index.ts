@@ -14,7 +14,7 @@ export interface CactusStatus {
 
 export interface CactusProgressEvent {
   model: 'whistle' | 'needle3';
-  phase: 'cached' | 'downloading' | 'ready';
+  phase: 'cached' | 'downloading' | 'loading' | 'ready';
   progress: number;
   receivedBytes: number;
   totalBytes: number;
@@ -41,7 +41,6 @@ interface CactusNativeModuleType {
   clearModels(): Promise<CactusStatus>;
   transcribeFile(uri: string, language?: string | null): Promise<CactusTranscribeResult>;
   extractNote(text: string, localDate: string): Promise<CactusExtractedNote>;
-  embedText(text: string): Promise<number[]>;
   addListener(
     eventName: 'onModelProgress',
     listener: (event: CactusProgressEvent) => void
