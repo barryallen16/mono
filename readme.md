@@ -68,7 +68,7 @@ Hold mic / swipe up to lock
   -> MediaRecorder (.m4a clip in local storage)
   -> AudioDecoder.kt (MediaExtractor + MediaCodec + sinc resample to 16 kHz mono PCM)
   -> Whistle (whistle.cact via libcactus.a JNI -> chunked transcript)
-  -> Needle 3 (needle3.cact save_note JSON tool call, or regex fallback)
+  -> Needle 3 (needle3.cact save_note JSON tool call)
   -> expo-sqlite (searchable note card + playable clip + checkable tasks)
 ```
 
@@ -87,7 +87,7 @@ Hold mic / swipe up to lock
     <td width="50%" valign="top">
       <h3>Fallbacks and constraints</h3>
       <ul>
-        <li>Expo Go, x86 emulators, and web browsers use rule-based extraction in <code>utils/extract.ts</code> instead of Cactus.</li>
+        <li>If models are not cached yet, notes queue locally until Whistle and Needle 3 finish downloading.</li>
         <li>First-time on-device model setup requires downloading roughly 52 MB total over the network before offline use.</li>
         <li>Voice recordings cap at 120 seconds per clip and save locally when stopped.</li>
       </ul>
@@ -105,7 +105,7 @@ Hold mic / swipe up to lock
 | `components/capture-composer.tsx` | WhatsApp-style hold-to-record, swipe-up-to-lock, and slide-left-to-cancel bar |
 | `modules/cactus-native/` | C++ JNI wrapper, `AudioDecoder.kt`, model downloader, and prebuilt `libcactus.a` |
 | `plugins/with-expo-audio-fix.js` | Expo config plugin patching `expo-audio` Android recording and `file://` playback |
-| `utils/` | SQLite schema, `expo-audio` playback/export helpers, and regex fallback extractor |
+| `utils/` | SQLite schema, `expo-audio` playback/export helpers, and Cactus note pipeline |
 
 ## Commands
 
@@ -115,7 +115,7 @@ Install dependencies with Bun:
 bun install
 ```
 
-Run all 34 unit and extraction eval tests, lint, and type checks:
+Run unit tests, lint, and type checks:
 
 ```bash
 bun test

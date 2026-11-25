@@ -5,13 +5,12 @@ import {
   setAudioModeAsync,
   useAudioRecorder,
 } from 'expo-audio';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
   Linking,
-  Platform,
   ScrollView,
   Text,
   Vibration,
@@ -48,47 +47,23 @@ interface ModelProgressState {
 
 function getRecordingOptions(): RecordingOptions {
   const base = RecordingPresets.HIGH_QUALITY;
-  const android: RecordingOptions['android'] = {
-    ...base.android,
-    extension: '.m4a',
-    sampleRate: 16000,
-    outputFormat: 'mpeg4',
-    audioEncoder: 'aac',
-  };
-
-  if (Platform.OS !== 'web' || typeof MediaRecorder === 'undefined') {
-    return {
-      ...base,
-      sampleRate: 16000,
-      numberOfChannels: 1,
-      bitRate: 64000,
-      isMeteringEnabled: true,
-      android,
-    };
-  }
-
-  const webOptions: NonNullable<RecordingOptions['web']> = { ...base.web };
-  if (typeof MediaRecorder.isTypeSupported === 'function') {
-    if (MediaRecorder.isTypeSupported('audio/webm')) {
-      webOptions.mimeType = 'audio/webm';
-    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-      webOptions.mimeType = 'audio/mp4';
-    }
-  }
-
   return {
     ...base,
     sampleRate: 16000,
     numberOfChannels: 1,
     bitRate: 64000,
     isMeteringEnabled: true,
-    android,
-    web: webOptions,
+    android: {
+      ...base.android,
+      extension: '.m4a',
+      sampleRate: 16000,
+      outputFormat: 'mpeg4',
+      audioEncoder: 'aac',
+    },
   };
 }
 
 export default function CaptureScreen() {
-  const router = useRouter();
   const recordingOptions = useMemo(() => getRecordingOptions(), []);
   const recorder = useAudioRecorder(recordingOptions);
 
@@ -276,12 +251,10 @@ export default function CaptureScreen() {
           await recorder.stop().catch(() => {});
           const uri = recorder.uri ?? preStopStatus.url ?? recorder.getStatus().url;
           await discardTempAudioClip(uri);
-          if (Platform.OS !== 'web') {
-            await setAudioModeAsync({
-              allowsRecording: false,
-              playsInSilentMode: true,
-            }).catch(() => {});
-          }
+          await setAudioModeAsync({
+            allowsRecording: false,
+            playsInSilentMode: true,
+          }).catch(() => {});
         } finally {
           busyRef.current = false;
           if (mountedRef.current) setIsRecorderBusy(false);
@@ -318,12 +291,10 @@ export default function CaptureScreen() {
       await recorder.stop();
       const uri = recorder.uri ?? preStopStatus.url ?? recorder.getStatus().url;
 
-      if (Platform.OS !== 'web') {
-        await setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-        }).catch(() => {});
-      }
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => {});
 
       if (!mountedRef.current) {
         await discardTempAudioClip(uri);
@@ -349,24 +320,18 @@ export default function CaptureScreen() {
         setLatestNote(saved);
         refreshLatest();
         runBackgroundProcessing(saved.id);
-      } catch (err) {
+      } catch {
         await discardTempAudioClip(uri);
-        if (!mountedRef.current) return;
-        const msg = err instanceof Error ? err.message : '';
-        if (msg.includes('QuotaExceeded') || msg.includes('quota')) {
-          setError('Browser storage is full. Clear older notes in Vault first.');
-        } else {
+        if (mountedRef.current) {
           setError('Failed to save note locally.');
         }
       }
     } catch (err) {
       await discardTempAudioClip(recorder.uri).catch(() => {});
-      if (Platform.OS !== 'web') {
-        await setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-        }).catch(() => {});
-      }
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => {});
       if (mountedRef.current) {
         if (elapsedMs < 700) {
           flashHint('Hold mic a bit longer to record');
@@ -410,18 +375,14 @@ export default function CaptureScreen() {
         return;
       }
 
-      if (Platform.OS !== 'web') {
-        await setAudioModeAsync({
-          allowsRecording: true,
-          playsInSilentMode: true,
-        });
-      }
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
       if (!mountedRef.current || !wantRecordingRef.current) {
-        if (Platform.OS !== 'web') {
-          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
-            () => {}
-          );
-        }
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
+          () => {}
+        );
         resetRecordingUi();
         return;
       }
@@ -430,18 +391,16 @@ export default function CaptureScreen() {
       if (!mountedRef.current || !wantRecordingRef.current) {
         await recorder.stop().catch(() => {});
         await discardTempAudioClip(recorder.uri);
-        if (Platform.OS !== 'web') {
-          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
-            () => {}
-          );
-        }
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
+          () => {}
+        );
         resetRecordingUi();
         return;
       }
 
       recorder.record();
       const startedStatus = recorder.getStatus();
-      if (Platform.OS !== 'web' && !startedStatus.isRecording) {
+      if (!startedStatus.isRecording) {
         throw new Error('Native recorder did not enter recording state');
       }
 
@@ -488,9 +447,7 @@ export default function CaptureScreen() {
 
   const handleHoldStart = () => {
     if (busyRef.current || recordingActiveRef.current || isSaving) return;
-    if (Platform.OS === 'android') {
-      Vibration.vibrate(10);
-    }
+    Vibration.vibrate(10);
     wantRecordingRef.current = true;
     recordingModeRef.current = 'holding';
     setRecordingMode('holding');
@@ -499,17 +456,13 @@ export default function CaptureScreen() {
 
   const handleHoldLock = () => {
     if (!wantRecordingRef.current && !recordingActiveRef.current) return;
-    if (Platform.OS === 'android') {
-      Vibration.vibrate(15);
-    }
+    Vibration.vibrate(15);
     recordingModeRef.current = 'locked';
     setRecordingMode('locked');
   };
 
   const handleHoldCancel = () => {
-    if (Platform.OS === 'android') {
-      Vibration.vibrate(15);
-    }
+    Vibration.vibrate(15);
     cancelRecording();
   };
 
@@ -544,12 +497,8 @@ export default function CaptureScreen() {
       setDraftText('');
       refreshLatest();
       runBackgroundProcessing(saved.id, trimmed);
-    } catch (err) {
-      if (!mountedRef.current) return;
-      const msg = err instanceof Error ? err.message : '';
-      if (msg.includes('QuotaExceeded') || msg.includes('quota')) {
-        setError('Browser storage is full. Clear older notes in Vault first.');
-      } else {
+    } catch {
+      if (mountedRef.current) {
         setError('Failed to save note locally.');
       }
     } finally {
@@ -640,9 +589,7 @@ export default function CaptureScreen() {
         }
       />
 
-      <KeyboardAvoidingView
-        className="flex-1"
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView className="flex-1">
         <ScrollView
           className="flex-1"
           contentContainerStyle={{ padding: 16, paddingBottom: 24, flexGrow: 1 }}
@@ -670,19 +617,12 @@ export default function CaptureScreen() {
             {error ? (
               <View className="gap-2">
                 <ErrorBanner>{error}</ErrorBanner>
-                {error.includes('Microphone permission') && Platform.OS !== 'web' ? (
+                {error.includes('Microphone permission') ? (
                   <Button
                     label="Open app settings"
                     icon="sliders"
                     variant="secondary"
                     onPress={() => Linking.openSettings()}
-                  />
-                ) : error.includes('Vault') ? (
-                  <Button
-                    label="Open Vault"
-                    icon="archive"
-                    variant="secondary"
-                    onPress={() => router.navigate('./vault')}
                   />
                 ) : null}
               </View>

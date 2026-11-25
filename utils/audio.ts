@@ -6,7 +6,7 @@ import {
   setAudioModeAsync,
 } from 'expo-audio';
 import * as FileSystem from 'expo-file-system';
-import { Platform, Share } from 'react-native';
+import { Share } from 'react-native';
 
 import { formatLocalDate, MonoNote } from './notes';
 
@@ -16,30 +16,8 @@ let clipSeq = 0;
 let activeToken = 0;
 let activeStopper: (() => Promise<void>) | null = null;
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result);
-      } else {
-        reject(new Error('Failed to encode audio clip'));
-      }
-    };
-    reader.onerror = () => reject(reader.error || new Error('Failed to read audio clip'));
-    reader.readAsDataURL(blob);
-  });
-}
-
 export async function persistAudioClip(tempUri: string | null): Promise<string | null> {
   if (!tempUri) return null;
-
-  if (Platform.OS === 'web') {
-    if (tempUri.startsWith('data:')) return tempUri;
-    const response = await fetch(tempUri);
-    const blob = await response.blob();
-    return blobToDataUrl(blob);
-  }
 
   const sourceUri = tempUri.startsWith('/') ? `file://${tempUri}` : tempUri;
   const baseDir = FileSystem.documentDirectory;
@@ -58,17 +36,10 @@ export async function persistAudioClip(tempUri: string | null): Promise<string |
 
 export async function discardTempAudioClip(uri: string | null): Promise<void> {
   if (!uri) return;
-  if (Platform.OS === 'web') {
-    if (uri.startsWith('blob:') && typeof URL !== 'undefined') {
-      URL.revokeObjectURL(uri);
-    }
-    return;
-  }
   await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
 }
 
 export async function deleteAllSavedAudioFiles(): Promise<void> {
-  if (Platform.OS === 'web') return;
   const baseDir = FileSystem.documentDirectory;
   if (!baseDir) return;
   await FileSystem.deleteAsync(`${baseDir}${RECORDINGS_SUBDIR}`, { idempotent: true }).catch(
@@ -85,10 +56,6 @@ export async function stopActivePlayback(): Promise<void> {
   }
 }
 
-function toSeconds(value: number): number {
-  return Platform.OS === 'web' ? value / 1000 : value;
-}
-
 export async function startAudioPlayback(
   uri: string,
   onProgress: (state: { isPlaying: boolean; positionSec: number; durationSec: number }) => void,
@@ -97,7 +64,6 @@ export async function startAudioPlayback(
   const prevStopper = activeStopper;
   const token = ++activeToken;
   let settled = false;
-  let pollId: ReturnType<typeof setInterval> | null = null;
   let subscription: { remove: () => void } | null = null;
   let player: AudioPlayer | null = null;
   let hasStarted = false;
@@ -105,10 +71,6 @@ export async function startAudioPlayback(
   const cleanup = async () => {
     if (settled) return;
     settled = true;
-    if (pollId) {
-      clearInterval(pollId);
-      pollId = null;
-    }
     if (subscription) {
       subscription.remove();
       subscription = null;
@@ -144,12 +106,10 @@ export async function startAudioPlayback(
     return stop;
   }
 
-  if (Platform.OS !== 'web') {
-    await setAudioModeAsync({
-      allowsRecording: false,
-      playsInSilentMode: true,
-    }).catch(() => {});
-  }
+  await setAudioModeAsync({
+    allowsRecording: false,
+    playsInSilentMode: true,
+  }).catch(() => {});
 
   if (token !== activeToken || settled) {
     await cleanup();
@@ -158,8 +118,8 @@ export async function startAudioPlayback(
 
   const handleStatus = (status: AudioStatus) => {
     if (settled || !status.isLoaded) return;
-    const rawDuration = toSeconds(status.duration ?? 0);
-    const rawPosition = toSeconds(status.currentTime ?? 0);
+    const rawDuration = status.duration ?? 0;
+    const rawPosition = status.currentTime ?? 0;
     const durationSec =
       Number.isFinite(rawDuration) && rawDuration > 0 ? Math.round(rawDuration) : 0;
     const positionSec =
@@ -193,13 +153,6 @@ export async function startAudioPlayback(
     player = created;
     subscription = created.addListener(PLAYBACK_STATUS_UPDATE, handleStatus);
     created.play();
-
-    if (Platform.OS === 'web') {
-      pollId = setInterval(() => {
-        if (!player || settled) return;
-        handleStatus(player.currentStatus);
-      }, 150);
-    }
   } catch (err) {
     await cleanup();
     throw err;
@@ -210,23 +163,10 @@ export async function startAudioPlayback(
 
 export async function exportNotesToFile(
   notes: MonoNote[]
-): Promise<'saved' | 'shared' | 'downloaded' | 'cancelled'> {
+): Promise<'saved' | 'shared' | 'cancelled'> {
   const payload = JSON.stringify(notes, null, 2);
 
-  if (Platform.OS === 'web' && typeof document !== 'undefined') {
-    const blob = new Blob([payload], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'mono-export.json';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    return 'downloaded';
-  }
-
-  if (Platform.OS === 'android' && FileSystem.StorageAccessFramework) {
+  if (FileSystem.StorageAccessFramework) {
     const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
     if (!permissions.granted) {
       return 'cancelled';

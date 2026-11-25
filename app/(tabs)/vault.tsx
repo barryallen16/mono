@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Linking, Platform, ScrollView, Text, View } from 'react-native';
+import { Linking, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PixelIcon } from '~/components/pixel-icon';
@@ -39,10 +39,9 @@ function last14Days(): string[] {
 
 const SUPPORT_URL = 'https://github.com/barryallen16/mono/issues';
 
-const EXPORT_MESSAGES: Record<'saved' | 'shared' | 'downloaded' | 'cancelled', string> = {
+const EXPORT_MESSAGES: Record<'saved' | 'shared' | 'cancelled', string> = {
   saved: 'Export saved to selected folder.',
   shared: 'Export ready to share.',
-  downloaded: 'Downloaded mono-export.json.',
   cancelled: 'Export cancelled.',
 };
 
@@ -180,7 +179,7 @@ export default function VaultScreen() {
   );
   const activeDates = new Set(notes.map((n) => n.localDate));
   const days = last14Days();
-  const storageLabel = Platform.OS === 'web' ? 'localStorage (browser)' : 'expo-sqlite (on-device)';
+  const storageLabel = 'expo-sqlite (on-device)';
 
   return (
     <SafeAreaView className="flex-1 bg-bg">
@@ -259,11 +258,9 @@ export default function VaultScreen() {
               <Text className="font-mono text-xs text-ink">
                 {cactusStatus?.supported
                   ? `Cactus 4.1.4 (${cactusStatus.abi})`
-                  : Platform.OS === 'android'
-                    ? cactusStatus
-                      ? `Unsupported ABI (${cactusStatus.abi})`
-                      : 'Expo Go (needs EAS APK build)'
-                    : 'Regex fallback (Android native only)'}
+                  : cactusStatus
+                    ? `Unsupported ABI (${cactusStatus.abi})`
+                    : 'Cactus runtime unavailable'}
               </Text>
             </View>
             {cactusStatus?.supported ? (

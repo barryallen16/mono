@@ -12,20 +12,13 @@ import {
   clearCactusModels,
   extractWithNeedle3,
   getCactusStatus,
-  isCactusAvailable,
   prepareCactusModels,
   subscribeCactusProgress,
   transcribeWithWhistle,
 } from '~/modules/cactus-native/src';
 
 export type { CactusProgressEvent, CactusStatus };
-export {
-  clearCactusModels,
-  getCactusStatus,
-  isCactusAvailable,
-  prepareCactusModels,
-  subscribeCactusProgress,
-};
+export { clearCactusModels, getCactusStatus, prepareCactusModels, subscribeCactusProgress };
 
 export async function processNoteWithCactus(
   draftText: string,
@@ -39,10 +32,9 @@ export async function processNoteWithCactus(
   let sttEngine: SttEngine = 'none';
   let lastError: string | null = null;
 
-  const cactusAvailable = isCactusAvailable();
   const useExistingTranscript = Boolean(options?.skipStt && options.existingTranscript?.trim());
   let status: CactusStatus | null = null;
-  if (cactusAvailable && (savedAudioUri || draftText.trim() || useExistingTranscript)) {
+  if (savedAudioUri || draftText.trim() || useExistingTranscript) {
     try {
       status = await getCactusStatus();
     } catch (err) {
@@ -54,12 +46,12 @@ export async function processNoteWithCactus(
     heardText = options?.existingTranscript?.trim() ?? '';
     audioState = savedAudioUri ? 'done' : 'none';
     sttEngine = savedAudioUri ? 'whistle' : 'none';
-  } else if (savedAudioUri && cactusAvailable) {
+  } else if (savedAudioUri) {
     if (!status?.supported) {
       audioState = 'failed';
       sttEngine = 'none';
       if (!lastError) {
-        lastError = 'On-device speech requires ARM Android.';
+        lastError = 'Cactus native runtime is unavailable on this device.';
       }
     } else if (!status.whistleCached && !status.whistleLoaded) {
       audioState = 'pending';
@@ -85,18 +77,19 @@ export async function processNoteWithCactus(
     : combineDraftAndTranscript(draftText, heardText);
   let extracted = null;
 
-  if (
-    finalTranscript &&
-    cactusAvailable &&
-    status?.supported &&
-    (status.needleCached || status.needleLoaded)
-  ) {
-    try {
-      extracted = await extractWithNeedle3(finalTranscript, localDate);
-    } catch (err) {
-      extracted = null;
+  if (finalTranscript && status?.supported) {
+    if (!status.needleCached && !status.needleLoaded) {
       if (!lastError) {
-        lastError = err instanceof Error ? err.message : 'Structured extraction failed.';
+        lastError = 'Note extractor model not downloaded yet. Tap Retry once cached.';
+      }
+    } else {
+      try {
+        extracted = await extractWithNeedle3(finalTranscript, localDate);
+      } catch (err) {
+        extracted = null;
+        if (!lastError) {
+          lastError = err instanceof Error ? err.message : 'Structured extraction failed.';
+        }
       }
     }
   }

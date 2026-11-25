@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Platform, StyleSheet, Vibration } from 'react-native';
+import { StyleSheet, Vibration } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PixelIcon } from '~/components/pixel-icon';
@@ -12,9 +12,7 @@ export default function TabLayout() {
     <Tabs
       screenListeners={{
         tabPress: () => {
-          if (Platform.OS === 'android') {
-            Vibration.vibrate(10);
-          }
+          Vibration.vibrate(10);
         },
       }}
       screenOptions={{

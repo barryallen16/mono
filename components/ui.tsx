@@ -2,7 +2,6 @@ import { ReactNode, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
-  Platform,
   Pressable,
   PressableProps,
   ScrollView,
@@ -200,11 +199,7 @@ export function Sheet({
   children: ReactNode;
 }) {
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType={Platform.OS === 'web' ? 'none' : 'fade'}
-      onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View className="flex-1 items-center justify-center bg-black/80 p-5">
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessible={false} />
         <View

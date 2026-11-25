@@ -362,9 +362,9 @@ export function NoteCard({
                 </Tappable>
               ) : null}
             </View>
-          ) : note.audioState === 'done' && note.extractEngine === 'regex' ? (
+          ) : note.extractEngine === 'none' && note.transcript.trim() ? (
             <View className="flex-row items-center justify-between gap-2">
-              <Text className="font-mono text-xs text-muted">Basic tags</Text>
+              <Text className="font-mono text-xs text-muted">Not extracted</Text>
               {onRetry ? (
                 <Tappable
                   onPress={() => onRetry(note.id)}

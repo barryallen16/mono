@@ -2,7 +2,7 @@ import * as SQLite from 'expo-sqlite';
 
 export type NotesDatabase = SQLite.SQLiteDatabase;
 
-let dbPromise: Promise<NotesDatabase | null> | null = null;
+let dbPromise: Promise<NotesDatabase> | null = null;
 
 const MIGRATION_COLUMNS: [string, string][] = [
   ['audio_uri', 'TEXT'],
@@ -13,7 +13,7 @@ const MIGRATION_COLUMNS: [string, string][] = [
   ['last_error', 'TEXT'],
 ];
 
-export function getSQLiteDatabase(): Promise<NotesDatabase | null> {
+export function getSQLiteDatabase(): Promise<NotesDatabase> {
   if (!dbPromise) {
     dbPromise = (async () => {
       const db = await SQLite.openDatabaseAsync('mono.db');

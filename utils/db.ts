@@ -3,7 +3,6 @@ import { processNoteWithCactus } from './cactus';
 import {
   buildNoteFields,
   computeStreak,
-  createMemoryNoteStore,
   filterNotes,
   formatLocalDate,
   MonoNote,
@@ -34,15 +33,6 @@ interface NoteRow {
   local_date: string;
   created_at: string;
 }
-
-const webStore = createMemoryNoteStore({
-  getItem: (key) => (typeof window !== 'undefined' ? window.localStorage.getItem(key) : null),
-  setItem: (key, value) => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(key, value);
-    }
-  },
-});
 
 export function parseJsonArray<T>(raw: string | null | undefined): T[] {
   if (!raw) return [];
@@ -79,7 +69,6 @@ function rowToNote(row: NoteRow): MonoNote {
 
 export async function listNotes(): Promise<MonoNote[]> {
   const db = await getSQLiteDatabase();
-  if (!db) return webStore.list();
   const rows = await db.getAllAsync<NoteRow>('SELECT * FROM notes ORDER BY id DESC');
   return rows.map(rowToNote);
 }
@@ -112,17 +101,6 @@ export async function createQuickNote(
   const savedAudioUri = await persistAudioClip(tempAudioUri);
   const db = await getSQLiteDatabase();
 
-  if (!db) {
-    try {
-      return webStore.createPending(draftText, durationSec, savedAudioUri);
-    } catch (err) {
-      if (savedAudioUri && savedAudioUri !== tempAudioUri) {
-        await discardTempAudioClip(savedAudioUri);
-      }
-      throw err;
-    }
-  }
-
   const localDate = formatLocalDate();
   const createdAt = new Date().toISOString();
   const trimmed = draftText.trim();
@@ -136,7 +114,6 @@ export async function createQuickNote(
       }
     : buildNoteFields(trimmed, durationSec, null);
   const audioState = savedAudioUri ? 'pending' : 'none';
-  const extractEngine = savedAudioUri || !trimmed ? 'none' : 'regex';
 
   try {
     const result = await db.runAsync(
@@ -154,7 +131,7 @@ export async function createQuickNote(
       savedAudioUri,
       audioState,
       'none',
-      extractEngine,
+      'none',
       null,
       null,
       localDate,
@@ -183,48 +160,6 @@ export function processSavedNote(noteId: number, draftText = ''): Promise<MonoNo
 
   const run = (async (): Promise<MonoNote | null> => {
     const db = await getSQLiteDatabase();
-
-    if (!db) {
-      const target = webStore.list().find((n) => n.id === noteId);
-      if (!target) return null;
-      const hasExistingTranscript =
-        target.audioState === 'done' && Boolean(target.transcript.trim());
-      const effectiveDraft = draftText.trim()
-        ? draftText
-        : target.sttEngine === 'none'
-          ? target.transcript
-          : '';
-      const fields = await processNoteWithCactus(
-        effectiveDraft,
-        target.durationSec,
-        target.audioUri,
-        target.localDate,
-        hasExistingTranscript ? { skipStt: true, existingTranscript: target.transcript } : undefined
-      );
-      const latest = webStore.list().find((n) => n.id === noteId);
-      if (!latest) return null;
-      const userEdited =
-        latest.title !== target.title ||
-        latest.transcript !== target.transcript ||
-        JSON.stringify(latest.tags) !== JSON.stringify(target.tags);
-      return webStore.update(noteId, {
-        ...(userEdited
-          ? {}
-          : {
-              title: fields.title,
-              transcript: fields.transcript,
-              summary: fields.summary,
-              tags: fields.tags,
-              actionItems: mergeDoneFlags(fields.actionItems, latest.actionItems),
-            }),
-        audioState: fields.audioState,
-        sttEngine: fields.sttEngine,
-        extractEngine: fields.extractEngine,
-        extractConfidence: fields.extractConfidence,
-        lastError: fields.lastError,
-      });
-    }
-
     const row = await db.getFirstAsync<NoteRow>('SELECT * FROM notes WHERE id = ?', noteId);
     if (!row) return null;
     const note = rowToNote(row);
@@ -298,8 +233,6 @@ export async function updateNote(
   }
 ): Promise<MonoNote | null> {
   const db = await getSQLiteDatabase();
-  if (!db) return webStore.update(noteId, patch);
-
   const row = await db.getFirstAsync<NoteRow>('SELECT * FROM notes WHERE id = ?', noteId);
   if (!row) return null;
   const current = rowToNote(row);
@@ -327,8 +260,6 @@ export async function updateNote(
 
 export async function toggleActionItem(noteId: number, actionId: string): Promise<MonoNote | null> {
   const db = await getSQLiteDatabase();
-  if (!db) return webStore.toggleAction(noteId, actionId);
-
   const row = await db.getFirstAsync<NoteRow>('SELECT * FROM notes WHERE id = ?', noteId);
   if (!row) return null;
   const target = rowToNote(row);
@@ -344,10 +275,6 @@ export async function toggleActionItem(noteId: number, actionId: string): Promis
 
 export async function deleteNote(noteId: number): Promise<void> {
   const db = await getSQLiteDatabase();
-  if (!db) {
-    webStore.remove(noteId);
-    return;
-  }
   const row = await db.getFirstAsync<Pick<NoteRow, 'audio_uri'>>(
     'SELECT audio_uri FROM notes WHERE id = ?',
     noteId
@@ -358,21 +285,12 @@ export async function deleteNote(noteId: number): Promise<void> {
 
 export async function wipeAllNotes(): Promise<void> {
   const db = await getSQLiteDatabase();
-  if (!db) {
-    webStore.wipe();
-    return;
-  }
   await db.runAsync('DELETE FROM notes');
   await deleteAllSavedAudioFiles();
 }
 
 export async function searchNotes(query: string, tag = 'all'): Promise<MonoNote[]> {
   const db = await getSQLiteDatabase();
-  if (!db) {
-    const filtered = filterNotes(webStore.list(), query);
-    return tag === 'all' ? filtered : filtered.filter((note) => note.tags.includes(tag));
-  }
-
   const conditions: string[] = [];
   const params: string[] = [];
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
