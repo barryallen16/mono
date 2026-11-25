@@ -37,7 +37,7 @@ function last14Days(): string[] {
   return days;
 }
 
-const SUPPORT_URL = 'https://github.com/barryallen16/all-is-well/issues';
+const SUPPORT_URL = 'https://github.com/barryallen16/mono/issues';
 
 const EXPORT_MESSAGES: Record<'saved' | 'shared' | 'downloaded' | 'cancelled', string> = {
   saved: 'Export saved to selected folder.',
@@ -384,7 +384,7 @@ export default function VaultScreen() {
           </Panel>
 
           <Text className="text-center font-mono text-xs text-muted" style={tabularNums}>
-            mono v{Constants.expoConfig?.version ?? '1.0.0'}
+            mono v{Constants.expoConfig?.version ?? '1.0.1'}
           </Text>
         </View>
       </ScrollView>

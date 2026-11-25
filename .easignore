@@ -12,9 +12,5 @@ npm-debug.*
 .env
 /ios
 /android
-.venv/
-venv/
-.impeccable/
-.lavish/
 .DS_Store
 .metro-health-check*
