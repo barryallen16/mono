@@ -1,0 +1,6 @@
+expo-env.d.ts
+.impeccable/
+.lavish/
+modules/cactus-native/android/
+android/
+dist/

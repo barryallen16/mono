@@ -1,6 +1,6 @@
 import { deleteAllSavedAudioFiles, discardTempAudioClip, persistAudioClip } from './audio';
+import { processNoteWithCactus } from './cactus';
 import {
-  buildNoteFields,
   computeStreak,
   createMemoryNoteStore,
   filterNotes,
@@ -76,11 +76,11 @@ export async function createNote(
     }
   }
 
-  const fields = buildNoteFields(transcript, durationSec, savedAudioUri);
   const localDate = formatLocalDate();
   const createdAt = new Date().toISOString();
 
   try {
+    const fields = await processNoteWithCactus(transcript, durationSec, savedAudioUri, localDate);
     const result = await db.runAsync(
       `INSERT INTO notes (title, transcript, summary, tags_json, action_items_json, duration_sec, audio_uri, local_date, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

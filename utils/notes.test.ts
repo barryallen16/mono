@@ -4,12 +4,14 @@ import { describe, it } from 'node:test';
 import { extractStructuredNote } from './extract';
 import {
   buildNoteFields,
+  combineDraftAndTranscript,
   computeStreak,
   createMemoryNoteStore,
   filterNotes,
   formatDuration,
   formatLocalDate,
   KeyValueStorage,
+  mergeCactusNoteFields,
   MonoNote,
 } from './notes';
 
@@ -176,5 +178,51 @@ describe('createMemoryNoteStore and filterNotes', () => {
     assert.throws(() => store.remove(created.id));
     assert.throws(() => store.wipe());
     assert.equal(store.list().length, 2);
+  });
+});
+
+describe('Cactus Whistle + Needle 3 field helpers', () => {
+  it('combines typed draft text and Whistle transcript cleanly', () => {
+    assert.equal(combineDraftAndTranscript('', 'Hello world'), 'Hello world');
+    assert.equal(combineDraftAndTranscript('Note', ''), 'Note');
+    assert.equal(
+      combineDraftAndTranscript('Extra context', 'Heard speech'),
+      'Heard speech\n\nExtra context'
+    );
+  });
+
+  it('prefers Needle 3 structured extraction and prefixes #voice for audio notes', () => {
+    const merged = mergeCactusNoteFields(
+      'Fix the login crash before tomorrow and test SQLite',
+      14,
+      'file:///clip.m4a',
+      {
+        matched: true,
+        title: 'Fix login crash',
+        summary: 'Resolve login crash and test SQLite tomorrow.',
+        tags: ['bug', 'todo'],
+        actionItems: ['Fix the login crash', 'Test SQLite tomorrow'],
+      }
+    );
+    assert.equal(merged.title, 'Fix login crash');
+    assert.equal(merged.summary, 'Resolve login crash and test SQLite tomorrow.');
+    assert.deepEqual(merged.tags, ['voice', 'bug', 'todo']);
+    assert.deepEqual(
+      merged.actionItems.map((item) => item.text),
+      ['Fix the login crash', 'Test SQLite tomorrow']
+    );
+  });
+
+  it('falls back to regex extraction when Needle 3 did not match', () => {
+    const fallback = mergeCactusNoteFields('Todo: fix login crash tomorrow.', 0, null, {
+      matched: false,
+      title: '',
+      summary: '',
+      tags: [],
+      actionItems: [],
+    });
+    assert.equal(fallback.title, 'Todo: fix login crash tomorrow.');
+    assert.ok(fallback.tags.includes('todo'));
+    assert.ok(fallback.tags.includes('bug'));
   });
 });

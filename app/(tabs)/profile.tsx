@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Platform, ScrollView, Share, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -13,22 +13,38 @@ import {
   Tappable,
   tabularNums,
 } from '~/components/ui';
+import {
+  CactusStatus,
+  clearCactusModels,
+  getCactusStatus,
+  prepareCactusModels,
+  subscribeCactusProgress,
+} from '~/utils/cactus';
 import { deleteNote, listNotes, MonoNote, wipeAllNotes } from '~/utils/db';
 import { formatDuration } from '~/utils/notes';
 
 type ConfirmAction = { type: 'delete'; note: MonoNote } | { type: 'wipe' } | null;
+
+function formatMb(bytes: number): string {
+  if (!bytes) return 'not cached';
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function VaultScreen() {
   const router = useRouter();
   const [notes, setNotes] = useState<MonoNote[]>([]);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isModelBusy, setIsModelBusy] = useState(false);
+  const [modelProgress, setModelProgress] = useState<string | null>(null);
+  const [cactusStatus, setCactusStatus] = useState<CactusStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const items = await listNotes();
+      const [items, status] = await Promise.all([listNotes(), getCactusStatus().catch(() => null)]);
       setNotes(items);
+      setCactusStatus(status);
     } catch {
       setError('Could not load saved entries.');
     }
@@ -39,6 +55,46 @@ export default function VaultScreen() {
       load();
     }, [load])
   );
+
+  useEffect(() => {
+    const sub = subscribeCactusProgress((ev) => {
+      if (ev.phase === 'downloading') {
+        setModelProgress(`Downloading ${ev.model}: ${Math.round(ev.progress * 100)}%`);
+      } else {
+        setModelProgress(null);
+      }
+    });
+    return () => {
+      sub?.remove();
+    };
+  }, []);
+
+  const handlePrepareModels = async () => {
+    setIsModelBusy(true);
+    setError(null);
+    try {
+      const next = await prepareCactusModels();
+      setCactusStatus(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not download Cactus models.');
+    } finally {
+      setIsModelBusy(false);
+      setModelProgress(null);
+    }
+  };
+
+  const handleClearModels = async () => {
+    setIsModelBusy(true);
+    setError(null);
+    try {
+      const next = await clearCactusModels();
+      setCactusStatus(next);
+    } catch {
+      setError('Could not clear cached models.');
+    } finally {
+      setIsModelBusy(false);
+    }
+  };
 
   const handleExport = async () => {
     setError(null);
@@ -116,9 +172,60 @@ export default function VaultScreen() {
               <Text className="font-mono text-xs text-ink">{storageLabel}</Text>
             </View>
             <View className="flex-row justify-between border-t border-line pt-2">
-              <Text className="font-mono text-xs text-muted">Network</Text>
-              <Text className="font-mono text-xs text-ink">offline-first</Text>
+              <Text className="font-mono text-xs text-muted">Inference</Text>
+              <Text className="font-mono text-xs text-ink">
+                {cactusStatus?.supported
+                  ? `Cactus 4.1.4 (${cactusStatus.abi})`
+                  : Platform.OS === 'android'
+                    ? cactusStatus
+                      ? `Unsupported ABI (${cactusStatus.abi})`
+                      : 'Expo Go (needs EAS APK build)'
+                    : 'Regex fallback (Android native only)'}
+              </Text>
             </View>
+            {cactusStatus?.supported ? (
+              <>
+                <View className="flex-row justify-between border-t border-line pt-2">
+                  <Text className="font-mono text-xs text-muted">Whistle STT</Text>
+                  <Text className="font-mono text-xs text-ink" style={tabularNums}>
+                    {cactusStatus.whistleLoaded ? 'loaded · ' : ''}
+                    {formatMb(cactusStatus.whistleBytes)}
+                  </Text>
+                </View>
+                <View className="flex-row justify-between border-t border-line pt-2">
+                  <Text className="font-mono text-xs text-muted">Needle 3</Text>
+                  <Text className="font-mono text-xs text-ink" style={tabularNums}>
+                    {cactusStatus.needleLoaded ? 'loaded · ' : ''}
+                    {formatMb(cactusStatus.needleBytes)}
+                  </Text>
+                </View>
+                {modelProgress ? (
+                  <Text className="font-mono text-xs text-accent">{modelProgress}</Text>
+                ) : null}
+                <View className="mt-1 gap-2">
+                  <Button
+                    label={
+                      cactusStatus.whistleCached && cactusStatus.needleCached
+                        ? 'Warm up on-device models'
+                        : 'Download Whistle + Needle 3 (~52 MB)'
+                    }
+                    icon="zap"
+                    variant="secondary"
+                    loading={isModelBusy}
+                    onPress={handlePrepareModels}
+                  />
+                  {cactusStatus.whistleCached || cactusStatus.needleCached ? (
+                    <Button
+                      label="Clear model cache"
+                      icon="trash"
+                      variant="ghost"
+                      disabled={isModelBusy}
+                      onPress={handleClearModels}
+                    />
+                  ) : null}
+                </View>
+              </>
+            ) : null}
           </Panel>
 
           <Panel className="gap-2.5">

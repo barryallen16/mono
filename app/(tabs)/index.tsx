@@ -16,6 +16,12 @@ import {
   tabularNums,
 } from '~/components/ui';
 import { discardTempAudioClip, stopActivePlayback } from '~/utils/audio';
+import {
+  CactusStatus,
+  getCactusStatus,
+  isCactusAvailable,
+  subscribeCactusProgress,
+} from '~/utils/cactus';
 import { createNote, listNotes, MonoNote, toggleActionItem } from '~/utils/db';
 import { formatDuration } from '~/utils/notes';
 
@@ -53,6 +59,8 @@ export default function CaptureScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [latestNote, setLatestNote] = useState<MonoNote | null>(null);
+  const [cactusStatus, setCactusStatus] = useState<CactusStatus | null>(null);
+  const [modelProgressText, setModelProgressText] = useState<string | null>(null);
 
   const recordingRef = useRef<Audio.Recording | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -75,11 +83,36 @@ export default function CaptureScreen() {
   useFocusEffect(
     useCallback(() => {
       refreshLatest();
+      getCactusStatus()
+        .then((status) => {
+          if (mountedRef.current) setCactusStatus(status);
+        })
+        .catch(() => {});
       return () => {
         stopActivePlayback();
       };
     }, [refreshLatest])
   );
+
+  useEffect(() => {
+    const sub = subscribeCactusProgress((ev) => {
+      if (!mountedRef.current) return;
+      if (ev.phase === 'downloading') {
+        const pct = Math.round(ev.progress * 100);
+        setModelProgressText(`${ev.model.toUpperCase()} ${pct}%`);
+      } else {
+        setModelProgressText(null);
+        getCactusStatus()
+          .then((status) => {
+            if (mountedRef.current) setCactusStatus(status);
+          })
+          .catch(() => {});
+      }
+    });
+    return () => {
+      sub?.remove();
+    };
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -230,6 +263,11 @@ export default function CaptureScreen() {
       setLatestNote(saved);
       setDraftText('');
       setPendingClip(null);
+      getCactusStatus()
+        .then((status) => {
+          if (mountedRef.current) setCactusStatus(status);
+        })
+        .catch(() => {});
     } catch (err) {
       if (!mountedRef.current) return;
       const msg = err instanceof Error ? err.message : '';
@@ -249,6 +287,19 @@ export default function CaptureScreen() {
   };
 
   const displaySeconds = isRecording ? elapsedSec : (pendingClip?.durationSec ?? 0);
+  const statusPillLabel = isRecording
+    ? formatDuration(elapsedSec)
+    : modelProgressText
+      ? modelProgressText
+      : cactusStatus?.supported
+        ? cactusStatus.whistleLoaded || cactusStatus.needleLoaded
+          ? 'CACTUS LIVE'
+          : cactusStatus.whistleCached && cactusStatus.needleCached
+            ? 'CACTUS READY'
+            : 'ON-DEVICE'
+        : isCactusAvailable()
+          ? 'REGEX FALLBACK'
+          : 'LOCAL';
 
   return (
     <SafeAreaView className="flex-1 bg-bg">
@@ -258,8 +309,8 @@ export default function CaptureScreen() {
         right={
           <View className="flex-row items-center gap-2 rounded-md border border-line bg-panel px-2.5 py-1.5">
             <View className={`h-2 w-2 rounded-sm ${isRecording ? 'bg-danger' : 'bg-accent'}`} />
-            <Text className="font-mono text-xs text-ink" style={tabularNums}>
-              {isRecording ? formatDuration(elapsedSec) : 'LOCAL'}
+            <Text className="font-mono text-xs text-ink" style={tabularNums} numberOfLines={1}>
+              {statusPillLabel}
             </Text>
           </View>
         }
@@ -331,7 +382,15 @@ export default function CaptureScreen() {
                   {draftText.length}/5000
                 </Text>
                 <Button
-                  label="Save entry"
+                  label={
+                    isSaving
+                      ? isCactusAvailable()
+                        ? pendingClip
+                          ? 'Transcribing...'
+                          : 'Extracting...'
+                        : 'Saving...'
+                      : 'Save entry'
+                  }
                   icon="check"
                   variant="secondary"
                   onPress={handleSave}

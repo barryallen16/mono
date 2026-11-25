@@ -28,6 +28,8 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.mono.voicelog",
+      "permissions": ["android.permission.RECORD_AUDIO"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#09318d"
@@ -36,7 +38,11 @@
     "extra": {
       "router": {
         "origin": false
+      },
+      "eas": {
+        "projectId": "e5b55f92-27c7-4cb6-9be6-0349f2eaad54"
       }
-    }
+    },
+    "owner": "barry.alen.16"
   }
 }

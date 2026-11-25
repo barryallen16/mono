@@ -65,6 +65,60 @@ export function buildNoteFields(
   };
 }
 
+export function combineDraftAndTranscript(draftText: string, heardText: string): string {
+  const draft = draftText.trim();
+  const heard = heardText.trim();
+  if (draft && heard) return `${heard}\n\n${draft}`;
+  return heard || draft;
+}
+
+export interface CactusStructuredInput {
+  matched: boolean;
+  title: string;
+  summary: string;
+  tags: string[];
+  actionItems: string[];
+}
+
+export function mergeCactusNoteFields(
+  transcript: string,
+  durationSec = 0,
+  audioUri: string | null = null,
+  cactus: CactusStructuredInput | null = null
+) {
+  const fallback = buildNoteFields(transcript, durationSec, audioUri);
+  const trimmed = transcript.trim();
+  if (!trimmed || !cactus || !cactus.matched) {
+    return fallback;
+  }
+
+  const title = cactus.title.trim() || fallback.title;
+  const summary = cactus.summary.trim() || fallback.summary;
+  const rawTags = cactus.tags.map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const baseTags = rawTags.length > 0 ? rawTags : fallback.tags;
+  const tags = audioUri
+    ? Array.from(new Set(['voice', ...baseTags])).slice(0, 4)
+    : Array.from(new Set(baseTags)).slice(0, 4);
+
+  const now = Date.now();
+  const actionItems: ActionItem[] =
+    cactus.actionItems.length > 0
+      ? cactus.actionItems
+          .map((text) => text.trim())
+          .filter(Boolean)
+          .slice(0, 5)
+          .map((text, idx) => ({ id: `act-${now}-${idx}`, text, done: false }))
+      : fallback.actionItems;
+
+  return {
+    title,
+    transcript: trimmed,
+    summary,
+    tags,
+    actionItems,
+  };
+}
+
 export function filterNotes(notes: MonoNote[], query: string): MonoNote[] {
   const q = query.trim().toLowerCase();
   if (!q) return notes;

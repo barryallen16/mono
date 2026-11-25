@@ -21,8 +21,10 @@ expo-env.d.ts
 # firebase/supabase/vexo
 .env
 
-ios
-android
+/ios
+/android
+.impeccable/
+.lavish/
 
 # macOS
 .DS_Store
