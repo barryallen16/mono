@@ -1,6 +1,7 @@
+import Constants from 'expo-constants';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Platform, ScrollView, Text, View } from 'react-native';
+import { Linking, Platform, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PixelIcon } from '~/components/pixel-icon';
@@ -36,6 +37,8 @@ function last14Days(): string[] {
   return days;
 }
 
+const SUPPORT_URL = 'https://github.com/barryallen16/all-is-well/issues';
+
 const EXPORT_MESSAGES: Record<'saved' | 'shared' | 'downloaded' | 'cancelled', string> = {
   saved: 'Export saved to selected folder.',
   shared: 'Export ready to share.',
@@ -47,6 +50,7 @@ export default function VaultScreen() {
   const router = useRouter();
   const [notes, setNotes] = useState<MonoNote[]>([]);
   const [showWipeConfirm, setShowWipeConfirm] = useState(false);
+  const [showLegalSheet, setShowLegalSheet] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isModelBusy, setIsModelBusy] = useState(false);
@@ -348,6 +352,28 @@ export default function VaultScreen() {
               variant="ghost"
               onPress={() => router.push('/onboarding')}
             />
+          </Panel>
+
+          <Panel className="gap-2.5">
+            <Text className="font-pixel text-base text-ink">Support & legal</Text>
+            <Button
+              label="Send feedback or report issue"
+              icon="info-box"
+              variant="secondary"
+              onPress={() =>
+                Linking.openURL(SUPPORT_URL).catch(() => setError('Could not open support link.'))
+              }
+            />
+            <Button
+              label="Privacy & terms"
+              icon="lock"
+              variant="ghost"
+              onPress={() => setShowLegalSheet(true)}
+            />
+          </Panel>
+
+          <Panel className="gap-2.5 border-danger/30">
+            <Text className="font-pixel text-base text-red-300">Danger zone</Text>
             <Button
               label="Wipe all notes"
               icon="trash"
@@ -356,8 +382,30 @@ export default function VaultScreen() {
               disabled={notes.length === 0}
             />
           </Panel>
+
+          <Text className="text-center font-mono text-xs text-muted" style={tabularNums}>
+            mono v{Constants.expoConfig?.version ?? '1.0.0'}
+          </Text>
         </View>
       </ScrollView>
+
+      <Sheet
+        visible={showLegalSheet}
+        onClose={() => setShowLegalSheet(false)}
+        title="Privacy & terms">
+        <View className="gap-3">
+          <Text className="font-mono text-xs leading-5 text-muted">
+            Privacy: mono records audio and stores notes, transcripts, and tasks locally on your
+            device. Speech and note models run offline on-device and are downloaded once from
+            Hugging Face when prepared.
+          </Text>
+          <Text className="font-mono text-xs leading-5 text-muted">
+            Terms: You own your exported notes and audio clips. Software is provided as-is without
+            warranty; back up important notes with Export JSON.
+          </Text>
+          <Button label="Close" variant="secondary" onPress={() => setShowLegalSheet(false)} />
+        </View>
+      </Sheet>
 
       <Sheet
         visible={showWipeConfirm}

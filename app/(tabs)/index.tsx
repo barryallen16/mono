@@ -5,23 +5,24 @@ import {
   setAudioModeAsync,
   useAudioRecorder,
 } from 'expo-audio';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  ScrollView,
+  Text,
+  Vibration,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CaptureComposer, RecordingMode } from '~/components/capture-composer';
 import { NoteCard, NotePatch } from '~/components/note-card';
 import { MonoLogo, PixelIcon } from '~/components/pixel-icon';
-import {
-  Button,
-  ErrorBanner,
-  Field,
-  Panel,
-  ScreenHeader,
-  Sheet,
-  Tappable,
-  tabularNums,
-} from '~/components/ui';
+import { Button, ErrorBanner, Panel, ScreenHeader, Sheet, tabularNums } from '~/components/ui';
 import { discardTempAudioClip, stopActivePlayback } from '~/utils/audio';
 import { getCactusStatus, prepareCactusModels, subscribeCactusProgress } from '~/utils/cactus';
 import {
@@ -87,14 +88,15 @@ function getRecordingOptions(): RecordingOptions {
 }
 
 export default function CaptureScreen() {
+  const router = useRouter();
   const recordingOptions = useMemo(() => getRecordingOptions(), []);
   const recorder = useAudioRecorder(recordingOptions);
 
-  const [isRecording, setIsRecording] = useState(false);
+  const [recordingMode, setRecordingMode] = useState<RecordingMode>('idle');
   const [isRecorderBusy, setIsRecorderBusy] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [meterLevel, setMeterLevel] = useState(0.08);
-  const [showTextComposer, setShowTextComposer] = useState(false);
+  const [holdHint, setHoldHint] = useState<string | null>(null);
   const [draftText, setDraftText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +107,11 @@ export default function CaptureScreen() {
   const [modelProgress, setModelProgress] = useState<ModelProgressState | null>(null);
 
   const recordingActiveRef = useRef(false);
+  const wantRecordingRef = useRef(false);
+  const recordingModeRef = useRef<RecordingMode>('idle');
+  const recordingStartedAtRef = useRef(0);
   const statusTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxDurationMsRef = useRef(0);
   const busyRef = useRef(false);
   const mountedRef = useRef(true);
@@ -114,6 +120,18 @@ export default function CaptureScreen() {
   const stopRecordingRef = useRef<() => Promise<void>>(async () => {});
 
   latestNoteRef.current = latestNote;
+  const isRecording = recordingMode !== 'idle';
+
+  const flashHint = useCallback((message: string) => {
+    if (hintTimerRef.current) {
+      clearTimeout(hintTimerRef.current);
+    }
+    setHoldHint(message);
+    hintTimerRef.current = setTimeout(() => {
+      hintTimerRef.current = null;
+      if (mountedRef.current) setHoldHint(null);
+    }, 2400);
+  }, []);
 
   const refreshLatest = useCallback(async () => {
     try {
@@ -166,6 +184,7 @@ export default function CaptureScreen() {
         .catch(() => {});
       return () => {
         stopActivePlayback();
+        wantRecordingRef.current = false;
         if (recordingActiveRef.current && !busyRef.current) {
           stopRecordingRef.current();
         }
@@ -216,6 +235,11 @@ export default function CaptureScreen() {
         clearInterval(statusTimerRef.current);
         statusTimerRef.current = null;
       }
+      if (hintTimerRef.current) {
+        clearTimeout(hintTimerRef.current);
+        hintTimerRef.current = null;
+      }
+      wantRecordingRef.current = false;
       if (recordingActiveRef.current) {
         recordingActiveRef.current = false;
         recorder
@@ -227,16 +251,67 @@ export default function CaptureScreen() {
     };
   }, [recorder]);
 
+  const resetRecordingUi = useCallback(() => {
+    recordingModeRef.current = 'idle';
+    setRecordingMode('idle');
+    setElapsedSec(0);
+    setMeterLevel(0.08);
+  }, []);
+
+  const cancelRecording = useCallback(
+    async (hintMessage?: string) => {
+      wantRecordingRef.current = false;
+      if (statusTimerRef.current) {
+        clearInterval(statusTimerRef.current);
+        statusTimerRef.current = null;
+      }
+      resetRecordingUi();
+
+      if (recordingActiveRef.current) {
+        busyRef.current = true;
+        setIsRecorderBusy(true);
+        recordingActiveRef.current = false;
+        try {
+          const preStopStatus = recorder.getStatus();
+          await recorder.stop().catch(() => {});
+          const uri = recorder.uri ?? preStopStatus.url ?? recorder.getStatus().url;
+          await discardTempAudioClip(uri);
+          if (Platform.OS !== 'web') {
+            await setAudioModeAsync({
+              allowsRecording: false,
+              playsInSilentMode: true,
+            }).catch(() => {});
+          }
+        } finally {
+          busyRef.current = false;
+          if (mountedRef.current) setIsRecorderBusy(false);
+        }
+      }
+
+      if (hintMessage && mountedRef.current) {
+        flashHint(hintMessage);
+      }
+    },
+    [flashHint, recorder, resetRecordingUi]
+  );
+
   const stopRecording = useCallback(async () => {
     if (busyRef.current || !recordingActiveRef.current) return;
     busyRef.current = true;
     setIsRecorderBusy(true);
+    wantRecordingRef.current = false;
     recordingActiveRef.current = false;
 
     if (statusTimerRef.current) {
       clearInterval(statusTimerRef.current);
       statusTimerRef.current = null;
     }
+
+    const elapsedMs = Math.max(
+      maxDurationMsRef.current,
+      Date.now() - recordingStartedAtRef.current
+    );
+    resetRecordingUi();
 
     try {
       const preStopStatus = recorder.getStatus();
@@ -255,8 +330,6 @@ export default function CaptureScreen() {
         return;
       }
 
-      setIsRecording(false);
-      setMeterLevel(0.08);
       const rawDuration = preStopStatus.durationMillis;
       const statusSec = Number.isFinite(rawDuration) ? Math.round((rawDuration ?? 0) / 1000) : 0;
       const trackedSec = Math.round(maxDurationMsRef.current / 1000);
@@ -274,7 +347,6 @@ export default function CaptureScreen() {
         }
         if (!mountedRef.current) return;
         setLatestNote(saved);
-        setElapsedSec(0);
         refreshLatest();
         runBackgroundProcessing(saved.id);
       } catch (err) {
@@ -287,17 +359,27 @@ export default function CaptureScreen() {
           setError('Failed to save note locally.');
         }
       }
-    } catch {
+    } catch (err) {
+      await discardTempAudioClip(recorder.uri).catch(() => {});
+      if (Platform.OS !== 'web') {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+        }).catch(() => {});
+      }
       if (mountedRef.current) {
-        setIsRecording(false);
-        setMeterLevel(0.08);
-        setError('Could not finalize audio clip.');
+        if (elapsedMs < 700) {
+          flashHint('Hold mic a bit longer to record');
+        } else {
+          const detail = err instanceof Error && err.message ? ` (${err.message})` : '';
+          setError(`Could not finalize audio clip${detail}.`);
+        }
       }
     } finally {
       busyRef.current = false;
       if (mountedRef.current) setIsRecorderBusy(false);
     }
-  }, [recorder, refreshLatest, runBackgroundProcessing]);
+  }, [flashHint, recorder, refreshLatest, resetRecordingUi, runBackgroundProcessing]);
 
   stopRecordingRef.current = stopRecording;
 
@@ -306,13 +388,25 @@ export default function CaptureScreen() {
     busyRef.current = true;
     setIsRecorderBusy(true);
     setError(null);
+    setHoldHint(null);
 
     try {
       await stopActivePlayback();
+      if (!mountedRef.current || !wantRecordingRef.current) {
+        resetRecordingUi();
+        return;
+      }
+
       const permission = await requestRecordingPermissionsAsync();
       if (!mountedRef.current) return;
       if (!permission.granted) {
+        wantRecordingRef.current = false;
+        resetRecordingUi();
         setError('Microphone permission is required to record voice notes.');
+        return;
+      }
+      if (!wantRecordingRef.current) {
+        resetRecordingUi();
         return;
       }
 
@@ -322,23 +416,49 @@ export default function CaptureScreen() {
           playsInSilentMode: true,
         });
       }
+      if (!mountedRef.current || !wantRecordingRef.current) {
+        if (Platform.OS !== 'web') {
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
+            () => {}
+          );
+        }
+        resetRecordingUi();
+        return;
+      }
 
       await recorder.prepareToRecordAsync();
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || !wantRecordingRef.current) {
+        await recorder.stop().catch(() => {});
+        await discardTempAudioClip(recorder.uri);
+        if (Platform.OS !== 'web') {
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
+            () => {}
+          );
+        }
+        resetRecordingUi();
+        return;
+      }
+
       recorder.record();
+      const startedStatus = recorder.getStatus();
+      if (Platform.OS !== 'web' && !startedStatus.isRecording) {
+        throw new Error('Native recorder did not enter recording state');
+      }
 
       recordingActiveRef.current = true;
+      recordingStartedAtRef.current = Date.now();
       maxDurationMsRef.current = 0;
-      setIsRecording(true);
       setElapsedSec(0);
       setMeterLevel(0.08);
 
       statusTimerRef.current = setInterval(() => {
         if (!mountedRef.current || !recordingActiveRef.current) return;
         const status = recorder.getStatus();
-        const durationMs = Number.isFinite(status.durationMillis)
+        const rawDuration = Number.isFinite(status.durationMillis)
           ? (status.durationMillis ?? 0)
           : 0;
+        const wallElapsed = Date.now() - recordingStartedAtRef.current;
+        const durationMs = Math.max(rawDuration, wallElapsed);
         if (durationMs > maxDurationMsRef.current) {
           maxDurationMsRef.current = durationMs;
         }
@@ -353,14 +473,60 @@ export default function CaptureScreen() {
           stopRecordingRef.current();
         }
       }, 250);
-    } catch {
+    } catch (err) {
+      wantRecordingRef.current = false;
       if (mountedRef.current) {
-        setError('Could not start audio recording.');
+        resetRecordingUi();
+        const detail = err instanceof Error && err.message ? ` (${err.message})` : '';
+        setError(`Could not start audio recording${detail}.`);
       }
     } finally {
       busyRef.current = false;
       if (mountedRef.current) setIsRecorderBusy(false);
     }
+  };
+
+  const handleHoldStart = () => {
+    if (busyRef.current || recordingActiveRef.current || isSaving) return;
+    if (Platform.OS === 'android') {
+      Vibration.vibrate(10);
+    }
+    wantRecordingRef.current = true;
+    recordingModeRef.current = 'holding';
+    setRecordingMode('holding');
+    startRecording();
+  };
+
+  const handleHoldLock = () => {
+    if (!wantRecordingRef.current && !recordingActiveRef.current) return;
+    if (Platform.OS === 'android') {
+      Vibration.vibrate(15);
+    }
+    recordingModeRef.current = 'locked';
+    setRecordingMode('locked');
+  };
+
+  const handleHoldCancel = () => {
+    if (Platform.OS === 'android') {
+      Vibration.vibrate(15);
+    }
+    cancelRecording();
+  };
+
+  const handleHoldRelease = () => {
+    if (recordingModeRef.current === 'locked') return;
+    wantRecordingRef.current = false;
+    if (!recordingActiveRef.current) {
+      resetRecordingUi();
+      flashHint('Hold mic to record - swipe up to lock');
+      return;
+    }
+    const heldMs = Math.max(maxDurationMsRef.current, Date.now() - recordingStartedAtRef.current);
+    if (heldMs < 500) {
+      cancelRecording('Hold mic a bit longer to record');
+      return;
+    }
+    stopRecording();
   };
 
   const handleSaveTextNote = async () => {
@@ -376,7 +542,6 @@ export default function CaptureScreen() {
       if (!mountedRef.current) return;
       setLatestNote(saved);
       setDraftText('');
-      setShowTextComposer(false);
       refreshLatest();
       runBackgroundProcessing(saved.id, trimmed);
     } catch (err) {
@@ -479,7 +644,8 @@ export default function CaptureScreen() {
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
-          contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+          className="flex-1"
+          contentContainerStyle={{ padding: 16, paddingBottom: 24, flexGrow: 1 }}
           keyboardShouldPersistTaps="handled">
           <View className="w-full max-w-2xl gap-4 self-center">
             {modelProgress ? (
@@ -501,77 +667,26 @@ export default function CaptureScreen() {
               </Panel>
             ) : null}
 
-            <Panel className="gap-4">
-              <View className="flex-row items-center justify-between">
-                <Text className="font-pixel text-lg text-ink">
-                  {isRecording ? 'Recording...' : 'New entry'}
-                </Text>
-                <Text className="font-mono text-xs text-muted" style={tabularNums}>
-                  {formatDuration(isRecording ? elapsedSec : 0)} / 02:00
-                </Text>
-              </View>
-
-              <Button
-                label={isRecording ? 'Stop recording' : 'Record voice'}
-                icon={isRecording ? 'square' : 'mic'}
-                variant={isRecording ? 'danger' : 'primary'}
-                disabled={isRecorderBusy || isSaving}
-                onPress={isRecording ? stopRecording : startRecording}
-              />
-
-              {isRecording ? (
-                <View className="gap-1.5">
-                  <View className="h-2 overflow-hidden rounded-sm border border-line bg-bg">
-                    <View
-                      className="h-full bg-danger"
-                      style={{ width: `${Math.round(meterLevel * 100)}%` }}
-                    />
-                  </View>
-                </View>
-              ) : null}
-
-              <View className="flex-row items-center justify-between">
-                <Tappable
-                  onPress={() => setShowTextComposer((v) => !v)}
-                  disabled={isRecording || isSaving}
-                  className="flex-row items-center gap-2 rounded-md border border-line bg-bg px-3 py-2">
-                  <PixelIcon name={showTextComposer ? 'close' : 'edit'} size={16} color="#d4cef0" />
-                  <Text className="font-mono-medium text-xs text-ink">
-                    {showTextComposer ? 'Hide text' : 'Type note'}
-                  </Text>
-                </Tappable>
-                {!isRecording ? (
-                  <Text className="font-mono text-xs text-muted">Saved locally on stop</Text>
+            {error ? (
+              <View className="gap-2">
+                <ErrorBanner>{error}</ErrorBanner>
+                {error.includes('Microphone permission') && Platform.OS !== 'web' ? (
+                  <Button
+                    label="Open app settings"
+                    icon="sliders"
+                    variant="secondary"
+                    onPress={() => Linking.openSettings()}
+                  />
+                ) : error.includes('Vault') ? (
+                  <Button
+                    label="Open Vault"
+                    icon="archive"
+                    variant="secondary"
+                    onPress={() => router.navigate('./vault')}
+                  />
                 ) : null}
               </View>
-
-              {showTextComposer ? (
-                <View className="gap-3 border-t border-line pt-3">
-                  <Field
-                    placeholder="Type a note, todo, or reminder..."
-                    value={draftText}
-                    onChangeText={setDraftText}
-                    multiline
-                    maxLength={5000}
-                  />
-                  <View className="flex-row items-center justify-between gap-3">
-                    <Text className="font-mono text-xs text-muted" style={tabularNums}>
-                      {draftText.length}/5000
-                    </Text>
-                    <Button
-                      label="Save text note"
-                      icon="check"
-                      variant="secondary"
-                      onPress={handleSaveTextNote}
-                      loading={isSaving}
-                      disabled={!draftText.trim() || isRecording || isRecorderBusy}
-                    />
-                  </View>
-                </View>
-              ) : null}
-            </Panel>
-
-            {error ? <ErrorBanner>{error}</ErrorBanner> : null}
+            ) : null}
 
             {latestNote ? (
               <NoteCard
@@ -587,13 +702,32 @@ export default function CaptureScreen() {
               <Panel className="items-start gap-2">
                 <Text className="font-pixel text-base text-ink">No entries yet</Text>
                 <Text className="font-mono text-xs leading-5 text-muted">
-                  Record a voice clip or type a note above. Your phone transcribes speech and pulls
-                  out tasks offline.
+                  Hold the mic button below to record (swipe up to lock), or type a note. Your phone
+                  transcribes speech and pulls out tasks offline.
                 </Text>
               </Panel>
             )}
           </View>
         </ScrollView>
+
+        <CaptureComposer
+          recordingMode={recordingMode}
+          elapsedSec={elapsedSec}
+          maxSec={MAX_RECORDING_SECONDS}
+          meterLevel={meterLevel}
+          draftText={draftText}
+          onChangeDraftText={setDraftText}
+          onSaveText={handleSaveTextNote}
+          onHoldStart={handleHoldStart}
+          onHoldLock={handleHoldLock}
+          onHoldCancel={handleHoldCancel}
+          onHoldRelease={handleHoldRelease}
+          onLockedStop={stopRecording}
+          onLockedCancel={() => cancelRecording()}
+          isSaving={isSaving}
+          isBusy={isRecorderBusy}
+          hint={holdHint}
+        />
       </KeyboardAvoidingView>
 
       <Sheet

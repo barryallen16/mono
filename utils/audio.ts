@@ -41,17 +41,18 @@ export async function persistAudioClip(tempUri: string | null): Promise<string |
     return blobToDataUrl(blob);
   }
 
+  const sourceUri = tempUri.startsWith('/') ? `file://${tempUri}` : tempUri;
   const baseDir = FileSystem.documentDirectory;
-  if (!baseDir) return tempUri;
+  if (!baseDir) return sourceUri;
 
   const recordingsDir = `${baseDir}${RECORDINGS_SUBDIR}`;
   await FileSystem.makeDirectoryAsync(recordingsDir, { intermediates: true });
-  const extMatch = tempUri.match(/\.[a-z0-9]+$/i);
+  const extMatch = sourceUri.match(/\.[a-z0-9]+$/i);
   const ext = extMatch ? extMatch[0] : '.m4a';
   clipSeq += 1;
   const targetUri = `${recordingsDir}clip-${Date.now()}-${clipSeq}${ext}`;
 
-  await FileSystem.copyAsync({ from: tempUri, to: targetUri });
+  await FileSystem.copyAsync({ from: sourceUri, to: targetUri });
   return targetUri;
 }
 

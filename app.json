@@ -15,6 +15,7 @@
       "expo-font",
       "expo-sqlite",
       "expo-audio",
+      "./plugins/with-expo-audio-fix",
       [
         "expo-build-properties",
         {
