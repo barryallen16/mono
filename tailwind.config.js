@@ -1,18 +1,22 @@
-/** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./app/**/*.{js,ts,tsx}', './components/**/*.{js,ts,tsx}'],
-
   presets: [require('nativewind/preset')],
   theme: {
     extend: {
       colors: {
-        '0eblack': '#0e0e0e',
-        'dark-bg': '#0e0e0e',
-        'header-bg': '#1c1c1c',
-        'border-gray': '#333',
-        'start-green': '#4CAF50',
-        'stop-red': '#F44336',
-        'error-red': '#F44336',
+        bg: '#09318d',
+        panel: '#07256c',
+        line: '#1f4ab2',
+        ink: '#ffffff',
+        muted: '#d4cef0',
+        accent: '#9d91cc',
+        danger: '#ef4444',
+      },
+      fontFamily: {
+        pixel: ['GeistPixel-Square'],
+        mono: ['GeistMono-Regular'],
+        'mono-medium': ['GeistMono-Medium'],
+        'mono-semibold': ['GeistMono-SemiBold'],
       },
     },
   },

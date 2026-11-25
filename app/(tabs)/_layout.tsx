@@ -1,68 +1,60 @@
-import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { PixelIcon } from '~/components/pixel-icon';
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  const bottomPadding = Math.max(8, insets.bottom);
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#6EE7B7',
-        tabBarInactiveTintColor: '#9CA3AF',
+        tabBarActiveTintColor: '#9d91cc',
+        tabBarInactiveTintColor: '#8fa4d8',
         tabBarStyle: {
-          backgroundColor: '#111827',
-          borderTopColor: 'rgba(255,255,255,0.08)',
+          backgroundColor: '#09318d',
+          borderTopColor: '#1f4ab2',
           borderTopWidth: StyleSheet.hairlineWidth,
+          height: 58 + bottomPadding,
+          paddingBottom: bottomPadding,
+          paddingTop: 6,
         },
         tabBarLabelStyle: {
+          fontFamily: 'GeistMono-Medium',
           fontSize: 11,
-          fontWeight: '600',
+          marginTop: 2,
         },
         tabBarHideOnKeyboard: true,
       }}>
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons name={focused ? 'home' : 'home-outline'} size={size} color={color} />
-          ),
-        }}
-      />
-
-      <Tabs.Screen
-        name="Activity"
-        options={{
-          title: 'Activity',
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={focused ? 'checkmark-circle' : 'checkmark-circle-outline'}
-              size={size}
-              color={color}
-            />
-          ),
+          title: 'Capture',
+          tabBarIcon: ({ color }) => <PixelIcon name="mic" size={24} color={color} />,
         }}
       />
       <Tabs.Screen
         name="Chat"
         options={{
-          title: 'Check in',
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={focused ? 'chatbubble-ellipses' : 'chatbubble-ellipses-outline'}
-              size={size}
-              color={color}
-            />
-          ),
+          title: 'Search',
+          tabBarIcon: ({ color }) => <PixelIcon name="search" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="Activity"
+        options={{
+          title: 'Streak',
+          tabBarIcon: ({ color }) => <PixelIcon name="zap" size={24} color={color} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons name={focused ? 'person' : 'person-outline'} size={size} color={color} />
-          ),
+          title: 'Vault',
+          tabBarIcon: ({ color }) => <PixelIcon name="archive" size={24} color={color} />,
         }}
       />
     </Tabs>

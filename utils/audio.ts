@@ -1,0 +1,197 @@
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
+import { Platform } from 'react-native';
+
+const RECORDINGS_SUBDIR = 'recordings/';
+
+let clipSeq = 0;
+let activeToken = 0;
+let activeStopper: (() => Promise<void>) | null = null;
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to encode audio clip'));
+      }
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read audio clip'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function persistAudioClip(tempUri: string | null): Promise<string | null> {
+  if (!tempUri) return null;
+
+  if (Platform.OS === 'web') {
+    if (tempUri.startsWith('data:')) return tempUri;
+    const response = await fetch(tempUri);
+    const blob = await response.blob();
+    return blobToDataUrl(blob);
+  }
+
+  const baseDir = FileSystem.documentDirectory;
+  if (!baseDir) return tempUri;
+
+  const recordingsDir = `${baseDir}${RECORDINGS_SUBDIR}`;
+  await FileSystem.makeDirectoryAsync(recordingsDir, { intermediates: true });
+  const extMatch = tempUri.match(/\.[a-z0-9]+$/i);
+  const ext = extMatch ? extMatch[0] : '.m4a';
+  clipSeq += 1;
+  const targetUri = `${recordingsDir}clip-${Date.now()}-${clipSeq}${ext}`;
+
+  await FileSystem.copyAsync({ from: tempUri, to: targetUri });
+  return targetUri;
+}
+
+export async function discardTempAudioClip(uri: string | null): Promise<void> {
+  if (!uri) return;
+  if (Platform.OS === 'web') {
+    if (uri.startsWith('blob:') && typeof URL !== 'undefined') {
+      URL.revokeObjectURL(uri);
+    }
+    return;
+  }
+  await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+}
+
+export async function deleteAllSavedAudioFiles(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  const baseDir = FileSystem.documentDirectory;
+  if (!baseDir) return;
+  await FileSystem.deleteAsync(`${baseDir}${RECORDINGS_SUBDIR}`, { idempotent: true }).catch(
+    () => {}
+  );
+}
+
+export async function stopActivePlayback(): Promise<void> {
+  activeToken += 1;
+  const stopper = activeStopper;
+  activeStopper = null;
+  if (stopper) {
+    await stopper().catch(() => {});
+  }
+}
+
+export async function startAudioPlayback(
+  uri: string,
+  onProgress: (state: { isPlaying: boolean; positionSec: number; durationSec: number }) => void,
+  onFinished: () => void
+): Promise<() => Promise<void>> {
+  const prevStopper = activeStopper;
+  const token = ++activeToken;
+  let settled = false;
+  let pollId: ReturnType<typeof setInterval> | null = null;
+  let sound: Audio.Sound | null = null;
+  let hasStarted = false;
+  let startedAt = Date.now();
+
+  const cleanup = async () => {
+    if (settled) return;
+    settled = true;
+    if (pollId) {
+      clearInterval(pollId);
+      pollId = null;
+    }
+    if (activeStopper === stop) {
+      activeStopper = null;
+    }
+    if (sound) {
+      const target = sound;
+      sound = null;
+      await target.stopAsync().catch(() => {});
+      await target.unloadAsync().catch(() => {});
+    }
+  };
+
+  const stop = async () => {
+    await cleanup();
+    onFinished();
+  };
+
+  activeStopper = stop;
+
+  if (prevStopper) {
+    await prevStopper().catch(() => {});
+  }
+
+  if (token !== activeToken || settled) {
+    await cleanup();
+    return stop;
+  }
+
+  if (Platform.OS !== 'web') {
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+    }).catch(() => {});
+  }
+
+  if (token !== activeToken || settled) {
+    await cleanup();
+    return stop;
+  }
+
+  const handleStatus = (status: Awaited<ReturnType<Audio.Sound['getStatusAsync']>>) => {
+    if (settled || !status.isLoaded) return;
+    const durationSec = Number.isFinite(status.durationMillis)
+      ? Math.round((status.durationMillis ?? 0) / 1000)
+      : 0;
+    const positionSec = Number.isFinite(status.positionMillis)
+      ? Math.floor((status.positionMillis ?? 0) / 1000)
+      : 0;
+
+    if (status.isPlaying || (status.positionMillis ?? 0) > 0) {
+      hasStarted = true;
+    }
+
+    if (status.didJustFinish) {
+      stop();
+      return;
+    }
+
+    // Stop cleanly if interrupted or stalled instead of leaving Sound loaded.
+    if (!status.isPlaying && (hasStarted || Date.now() - startedAt > 1000)) {
+      stop();
+      return;
+    }
+
+    onProgress({
+      isPlaying: true,
+      positionSec,
+      durationSec,
+    });
+  };
+
+  try {
+    startedAt = Date.now();
+    const created = await Audio.Sound.createAsync({ uri }, { shouldPlay: true }, handleStatus);
+    if (token !== activeToken || settled) {
+      await created.sound.stopAsync().catch(() => {});
+      await created.sound.unloadAsync().catch(() => {});
+      await cleanup();
+      return stop;
+    }
+    startedAt = Date.now();
+    sound = created.sound;
+
+    if (Platform.OS === 'web') {
+      // ExponentAV.web omits media.onended, so poll status briefly on web.
+      pollId = setInterval(() => {
+        if (!sound || settled) return;
+        sound
+          .getStatusAsync()
+          .then(handleStatus)
+          .catch(() => {});
+      }, 100);
+    }
+  } catch (err) {
+    await cleanup();
+    throw err;
+  }
+
+  return stop;
+}

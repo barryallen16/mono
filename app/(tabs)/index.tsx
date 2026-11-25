@@ -1,599 +1,366 @@
-import { MaterialIcons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
-import FormData from 'form-data';
-import { ReactNode, useEffect, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  Pressable,
-  Alert,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  ScrollView,
-  Platform,
-  Keyboard,
-} from 'react-native';
-import Animated, { Easing, FadeInDown, FadeOut } from 'react-native-reanimated';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Keyboard, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AudioClipBar, NoteCard } from '~/components/note-card';
+import { PixelIcon } from '~/components/pixel-icon';
 import {
   Button,
-  Card,
   ErrorBanner,
   Field,
-  GradientBackground,
+  Panel,
   ScreenHeader,
-  Sheet,
   Tappable,
   tabularNums,
 } from '~/components/ui';
-import { api, authHeaders } from '~/utils/api';
-
-interface TranscriptionResponseData {
-  text: string;
-}
-
-interface CrisisMatch {
-  phrase: string;
-  kind: string;
-  about_self: boolean;
-  historical: boolean;
-}
-
-interface CrisisResource {
-  name: string;
-  contact: string;
-}
-
-interface AnalysisResult {
-  level: 'crisis' | 'support' | 'none';
-  crisis: boolean;
-  about_self: boolean;
-  matched: CrisisMatch[];
-  message: string;
-  resources: CrisisResource[];
-  emergency: string | null;
-}
-
-type IconName = keyof typeof MaterialIcons.glyphMap;
+import { discardTempAudioClip, stopActivePlayback } from '~/utils/audio';
+import { createNote, listNotes, MonoNote, toggleActionItem } from '~/utils/db';
+import { formatDuration } from '~/utils/notes';
 
 const MAX_RECORDING_SECONDS = 120;
-const MAX_CONFESSION_LENGTH = 500;
 
-function formatDuration(seconds: number) {
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+interface PendingClip {
+  uri: string;
+  durationSec: number;
 }
 
-type RiskLevel = 'Low' | 'Medium' | 'High';
-interface ColorSet {
-  gradientColors: string[];
-  solidColor: string;
-}
-const colorSets: Record<RiskLevel, ColorSet> = {
-  Low: {
-    gradientColors: [
-      '#A7F3D0',
-      '#34D399',
-      '#6EE7B7',
-      '#AEDFF7',
-      '#60A5FA',
-      '#93C5FD',
-      '#D1FAE5',
-      '#BFDBFE',
-      '#E5E7EB',
-    ],
-    solidColor: '#A7F3D0',
-  },
-  Medium: {
-    gradientColors: [
-      '#AEDFF7',
-      '#60A5FA',
-      '#93C5FD',
-      '#E9D5FF',
-      '#A78BFA',
-      '#C4B5FD',
-      '#FBCFE8',
-      '#D1D5DB',
-      '#BFDBFE',
-    ],
-    solidColor: '#AEDFF7',
-  },
-  High: {
-    gradientColors: [
-      '#E9D5FF',
-      '#A78BFA',
-      '#C4B5FD',
-      '#FBCFE8',
-      '#F9A8D4',
-      '#F3D7E8',
-      '#D1D5DB',
-      '#E5E7EB',
-      '#C4B5FD',
-    ],
-    solidColor: '#E9D5FF',
-  },
-};
-
-function CollapsibleCard({
-  icon,
-  title,
-  open,
-  onToggle,
-  children,
-}: {
-  icon: IconName;
-  title: string;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <Card padded={false} className="overflow-hidden">
-      <Pressable
-        onPress={onToggle}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-        className="min-h-14 flex-row items-center gap-3 px-4"
-        style={({ pressed }) => ({
-          backgroundColor: pressed ? 'rgba(255,255,255,0.04)' : 'transparent',
-        })}>
-        <MaterialIcons name={icon} size={20} color="#6EE7B7" />
-        <Text className="flex-1 text-base font-semibold text-white">{title}</Text>
-        <MaterialIcons
-          name={open ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
-          size={22}
-          color="#9CA3AF"
-        />
-      </Pressable>
-      {open ? (
-        <Animated.View
-          entering={FadeInDown.duration(180).easing(Easing.out(Easing.quad))}
-          exiting={FadeOut.duration(120).easing(Easing.out(Easing.quad))}>
-          <View className="px-4 pb-4">{children}</View>
-        </Animated.View>
-      ) : null}
-    </Card>
-  );
+function getRecordingOptions(): Audio.RecordingOptions {
+  if (Platform.OS !== 'web' || typeof MediaRecorder === 'undefined') {
+    return Audio.RecordingOptionsPresets.HIGH_QUALITY;
+  }
+  const webOptions: Audio.RecordingOptionsWeb = {};
+  if (typeof MediaRecorder.isTypeSupported === 'function') {
+    if (MediaRecorder.isTypeSupported('audio/webm')) {
+      webOptions.mimeType = 'audio/webm';
+    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+      webOptions.mimeType = 'audio/mp4';
+    }
+  }
+  return {
+    ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+    web: webOptions,
+  };
 }
 
-export default function Home() {
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const [permissionResponse, requestPermission] = Audio.usePermissions();
-  const [transcription, setTranscription] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isSubmittingConfession, setIsSubmittingConfession] = useState(false);
+export default function CaptureScreen() {
+  const [isRecording, setIsRecording] = useState(false);
+  const [isRecorderBusy, setIsRecorderBusy] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const [pendingClip, setPendingClip] = useState<PendingClip | null>(null);
+  const [draftText, setDraftText] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [inputText, setInputText] = useState<string>('');
-  const [confessionText, setConfessionText] = useState<string>('');
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const isStoppingRef = useRef(false);
-  const [helpVisible, setHelpVisible] = useState(false);
-  const [helpResources, setHelpResources] = useState<CrisisResource[]>([]);
-  const [helpEmergency, setHelpEmergency] = useState<string | null>(null);
-  const [helpLoading, setHelpLoading] = useState(false);
-  const [helpError, setHelpError] = useState<string | null>(null);
+  const [latestNote, setLatestNote] = useState<MonoNote | null>(null);
 
-  const [isConfessionSectionOpen, setIsConfessionSectionOpen] = useState(false);
-  const [isThoughtsSectionOpen, setIsThoughtsSectionOpen] = useState(false);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const ticksRef = useRef(0);
+  const pendingClipRef = useRef<PendingClip | null>(null);
+  const busyRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  pendingClipRef.current = pendingClip;
+
+  const refreshLatest = useCallback(async () => {
+    try {
+      const notes = await listNotes();
+      if (mountedRef.current) setLatestNote(notes[0] ?? null);
+    } catch {
+      if (mountedRef.current) setError('Could not read local database.');
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshLatest();
+      return () => {
+        stopActivePlayback();
+      };
+    }, [refreshLatest])
+  );
 
   useEffect(() => {
-    if (!recording) {
-      setRecordingSeconds(0);
-      return;
-    }
-    const interval = setInterval(() => {
-      setRecordingSeconds((seconds) => Math.min(seconds + 1, MAX_RECORDING_SECONDS));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [recording]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (timerRef.current) clearInterval(timerRef.current);
+      const active = recordingRef.current;
+      recordingRef.current = null;
+      if (active) {
+        active
+          .stopAndUnloadAsync()
+          .then(() => discardTempAudioClip(active.getURI()))
+          .catch(() => {});
+      }
+      discardTempAudioClip(pendingClipRef.current?.uri ?? null);
+      stopActivePlayback();
+    };
+  }, []);
 
-  useEffect(() => {
-    if (recording && recordingSeconds >= MAX_RECORDING_SECONDS) {
-      StopRecording().catch((err) => console.error('Failed to stop recording', err));
-    }
-  }, [recording, recordingSeconds]);
+  const stopRecording = useCallback(async () => {
+    if (busyRef.current || !recordingRef.current) return;
+    busyRef.current = true;
+    setIsRecorderBusy(true);
 
-  async function StartRecording() {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    const active = recordingRef.current;
     try {
-      if (permissionResponse?.status !== 'granted') {
-        const permission = await requestPermission();
-        if (!permission.granted) {
-          Alert.alert('Permission Denied', 'Microphone access is needed to proceed.');
-          return;
-        }
-      }
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: true });
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      setRecording(recording);
-      setTranscription(null);
-      setResult(null);
-      setError(null);
-      setInputText('');
-      setIsProcessing(false);
-    } catch (err) {
-      console.error('Failed to start recording', err);
-      Alert.alert('Error', 'Could not start recording. Please try again.');
-    }
-  }
+      const status = await active.stopAndUnloadAsync();
+      const uri = active.getURI();
+      recordingRef.current = null;
 
-  async function StopRecording() {
-    if (!recording || isStoppingRef.current) return;
-    isStoppingRef.current = true;
-    try {
-      await recording.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
-      const uri = recording.getURI();
-      console.log('Recording saved at:', uri);
-      setRecording(null);
-      setIsProcessing(true);
-      if (uri) {
-        await transcribeAudio(uri);
-      }
-    } catch (err) {
-      console.error('Failed to stop recording', err);
-      Alert.alert('Error', 'Could not stop recording. Please try again.');
-      setError('Failed to stop recording.');
-    } finally {
-      isStoppingRef.current = false;
-      setRecording(null);
-    }
-  }
-
-  async function transcribeAudio(audioUri: string) {
-    try {
-      const fileInfo = await FileSystem.getInfoAsync(audioUri);
-      if (!fileInfo.exists) {
-        throw new Error('Audio file not found.');
+      if (Platform.OS !== 'web') {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+        }).catch(() => {});
       }
 
-      const formData = new FormData();
-      formData.append('file', {
-        uri: audioUri,
-        name: 'audio.m4a',
-        type: 'audio/m4a',
-      });
-
-      const response = await api.post<TranscriptionResponseData>('/transcribe', formData, {
-        headers: { ...(await authHeaders()), 'Content-Type': 'multipart/form-data' },
-      });
-
-      if (response.ok && response.data) {
-        const transcriptionText = response.data.text;
-        setTranscription(transcriptionText);
-        console.log(`Transcription: ${transcriptionText}`);
-        await analyzeText(transcriptionText);
-      } else {
-        console.error('Transcription failed', response.problem, response.data);
-        setError('Transcription failed. Please try again.');
-      }
-    } catch (err) {
-      console.error('Error transcribing:', err);
-      setError('An error occurred during transcription.');
-    } finally {
-      if (audioUri) {
-        await FileSystem.deleteAsync(audioUri).catch((err) => {
-          console.error('Failed to delete audio file:', err);
-        });
-      }
-      setIsProcessing(false);
-    }
-  }
-
-  async function analyzeText(text: string) {
-    try {
-      setIsProcessing(true);
-
-      const response = await api.post<AnalysisResult>(
-        '/predict_text',
-        { text },
-        { headers: await authHeaders() }
-      );
-
-      if (response.ok && response.data) {
-        setResult(response.data);
-      } else {
-        console.error('Analysis failed', response.problem, response.data);
-        setError('Failed to analyze your entry.');
-      }
-    } catch (err) {
-      console.error('Error analyzing entry:', err);
-      setError('An error occurred during analysis.');
-    } finally {
-      setIsProcessing(false);
-    }
-  }
-
-  const handleTextSubmit = async () => {
-    setTranscription(null);
-    setResult(null);
-    setError(null);
-    await analyzeText(inputText);
-    Keyboard.dismiss();
-  };
-
-  const handleConfessionSubmit = async () => {
-    try {
-      setIsSubmittingConfession(true);
-      const response = await api.post<{ error?: string }>(
-        '/confessions',
-        { content: confessionText },
-        { headers: await authHeaders() }
-      );
-
-      if (response.ok) {
-        Alert.alert('Saved', 'Your confession was saved privately. Read or delete it in Profile.');
-        setConfessionText('');
-        Keyboard.dismiss();
-      } else if (response.status === 401) {
-        Alert.alert('Session Expired', 'Please sign in again.');
-      } else {
-        Alert.alert(
-          'Error',
-          response.data?.error || 'Failed to submit your confession. Please try again.'
-        );
-      }
-    } catch (err) {
-      console.error('Error submitting confession:', err);
-      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
-    } finally {
-      setIsSubmittingConfession(false);
-    }
-  };
-
-  const openHelp = async () => {
-    setHelpVisible(true);
-    if (helpResources.length > 0) return;
-
-    setHelpLoading(true);
-    setHelpError(null);
-    try {
-      const response = await api.get<{ resources: CrisisResource[]; emergency: string }>(
-        '/resources'
-      );
-      if (!response.ok || !response.data) {
-        setHelpError('Could not load helplines. If you are in immediate danger, call 112.');
+      if (!mountedRef.current) {
+        await discardTempAudioClip(uri);
         return;
       }
-      setHelpResources(response.data.resources);
-      setHelpEmergency(response.data.emergency);
-    } catch (err) {
-      console.error('Failed to load help resources', err);
-      setHelpError('Could not load helplines. If you are in immediate danger, call 112.');
+
+      setIsRecording(false);
+      const rawDuration = status.durationMillis;
+      const statusSec = Number.isFinite(rawDuration) ? Math.round((rawDuration ?? 0) / 1000) : 0;
+      const durationSec = Math.max(1, ticksRef.current, statusSec);
+
+      if (uri) {
+        await discardTempAudioClip(pendingClipRef.current?.uri ?? null);
+        setPendingClip({ uri, durationSec });
+      } else {
+        setError('Recording finished without audio output.');
+      }
+    } catch {
+      recordingRef.current = null;
+      if (mountedRef.current) {
+        setIsRecording(false);
+        setError('Could not finalize audio clip.');
+      }
     } finally {
-      setHelpLoading(false);
+      busyRef.current = false;
+      if (mountedRef.current) setIsRecorderBusy(false);
+    }
+  }, []);
+
+  const startRecording = async () => {
+    if (busyRef.current || recordingRef.current || isSaving) return;
+    busyRef.current = true;
+    setIsRecorderBusy(true);
+    setError(null);
+
+    try {
+      await stopActivePlayback();
+      const permission = await Audio.requestPermissionsAsync();
+      if (!mountedRef.current) return;
+      if (!permission.granted) {
+        setError('Microphone permission is required to record voice notes.');
+        return;
+      }
+
+      if (Platform.OS !== 'web') {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+      }
+
+      const { recording: created } = await Audio.Recording.createAsync(getRecordingOptions());
+      if (!mountedRef.current) {
+        await created.stopAndUnloadAsync().catch(() => {});
+        await discardTempAudioClip(created.getURI());
+        return;
+      }
+
+      recordingRef.current = created;
+      ticksRef.current = 0;
+      setIsRecording(true);
+      setElapsedSec(0);
+
+      timerRef.current = setInterval(() => {
+        ticksRef.current += 1;
+        setElapsedSec(ticksRef.current);
+        if (ticksRef.current >= MAX_RECORDING_SECONDS) {
+          stopRecording();
+        }
+      }, 1000);
+    } catch {
+      if (mountedRef.current) {
+        setError('Could not start audio recording.');
+      }
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setIsRecorderBusy(false);
     }
   };
 
-  const colorKey: RiskLevel =
-    result?.level === 'crisis' ? 'High' : result?.level === 'support' ? 'Medium' : 'Low';
-  const currentColors = colorSets[colorKey];
-  const todayLabel = new Date().toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'short',
-    day: 'numeric',
-  });
+  const handleDiscardClip = async () => {
+    if (!pendingClip || isSaving || isRecorderBusy || isRecording) return;
+    await stopActivePlayback();
+    await discardTempAudioClip(pendingClip.uri);
+    setPendingClip(null);
+  };
+
+  const handleSave = async () => {
+    const trimmed = draftText.trim();
+    if ((!trimmed && !pendingClip) || isSaving || isRecorderBusy || isRecording) return;
+
+    Keyboard.dismiss();
+    await stopActivePlayback();
+    setIsSaving(true);
+    setError(null);
+    const clipToSave = pendingClip;
+    try {
+      const saved = await createNote(
+        trimmed,
+        clipToSave?.durationSec ?? 0,
+        clipToSave?.uri ?? null
+      );
+      if (clipToSave?.uri && saved.audioUri !== clipToSave.uri) {
+        await discardTempAudioClip(clipToSave.uri);
+      }
+      if (!mountedRef.current) return;
+      setLatestNote(saved);
+      setDraftText('');
+      setPendingClip(null);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('QuotaExceeded') || msg.includes('quota')) {
+        setError('Browser storage is full. Clear older notes in Vault first.');
+      } else {
+        setError('Failed to save note locally.');
+      }
+    } finally {
+      if (mountedRef.current) setIsSaving(false);
+    }
+  };
+
+  const handleToggleAction = async (noteId: number, actionId: string) => {
+    const updated = await toggleActionItem(noteId, actionId);
+    if (updated && mountedRef.current) setLatestNote(updated);
+  };
+
+  const displaySeconds = isRecording ? elapsedSec : (pendingClip?.durationSec ?? 0);
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-900">
+    <SafeAreaView className="flex-1 bg-bg">
       <ScreenHeader
-        title="All Is Well"
-        subtitle={todayLabel}
+        title="mono"
+        subtitle="Offline voice log"
         right={
-          <Tappable
-            onPress={openHelp}
-            className="min-h-11 flex-row items-center gap-1.5 rounded-full border border-red-500/30 bg-red-500/10 px-3.5">
-            <MaterialIcons name="support-agent" size={18} color="#FCA5A5" />
-            <Text className="text-sm font-semibold text-red-200">Get help</Text>
-          </Tappable>
+          <View className="flex-row items-center gap-2 rounded-md border border-line bg-panel px-2.5 py-1.5">
+            <View className={`h-2 w-2 rounded-sm ${isRecording ? 'bg-danger' : 'bg-accent'}`} />
+            <Text className="font-mono text-xs text-ink" style={tabularNums}>
+              {isRecording ? formatDuration(elapsedSec) : 'LOCAL'}
+            </Text>
+          </View>
         }
       />
 
-      <View className="flex-1">
-        <GradientBackground
-          colors={currentColors.gradientColors}
-          solid={currentColors.solidColor}
-        />
-
-        <KeyboardAvoidingView
-          className="flex-1"
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <ScrollView
-            className="flex-1"
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-            contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
-            <View className="w-full max-w-2xl gap-4 self-center">
-              <Card className="items-center">
-                <Text className="text-lg font-semibold text-white">How are you feeling?</Text>
-                <Text className="mt-1 text-center text-sm text-gray-400">
-                  Tap the mic and talk it out. Up to two minutes.
+      <KeyboardAvoidingView
+        className="flex-1"
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+          keyboardShouldPersistTaps="handled">
+          <View className="w-full max-w-2xl gap-4 self-center">
+            <Panel className="gap-4">
+              <View className="flex-row items-center justify-between">
+                <Text className="font-pixel text-lg text-ink">
+                  {isRecording ? 'Recording...' : 'New entry'}
                 </Text>
-                <Tappable
-                  onPress={recording ? StopRecording : StartRecording}
-                  disabled={isProcessing}
-                  accessibilityLabel={recording ? 'Stop recording' : 'Start recording'}
-                  className={`mt-4 h-20 w-20 items-center justify-center rounded-full ${
-                    recording ? 'bg-red-500' : 'bg-emerald-300'
-                  } ${isProcessing ? 'opacity-50' : ''}`}>
-                  <MaterialIcons
-                    name={recording ? 'stop' : 'mic'}
-                    size={34}
-                    color={recording ? '#FFFFFF' : '#022C22'}
-                  />
-                </Tappable>
-                {recording ? (
-                  <>
-                    <Text className="mt-3 text-2xl font-bold text-white" style={tabularNums}>
-                      {formatDuration(recordingSeconds)}
-                    </Text>
-                    <Text className="mt-1 text-sm text-gray-400">Tap stop when you are done.</Text>
-                  </>
-                ) : (
-                  <Text className="mt-3 text-sm font-semibold text-gray-300">Tap to record</Text>
-                )}
-              </Card>
-
-              {isProcessing && (
-                <View className="flex-row items-center gap-2 self-center rounded-full border border-white/10 bg-gray-900 px-4 py-2">
-                  <ActivityIndicator size="small" color="#6EE7B7" />
-                  <Text className="text-sm text-gray-300">Checking your entry...</Text>
-                </View>
-              )}
-
-              <CollapsibleCard
-                icon="edit"
-                title="Share a confession"
-                open={isConfessionSectionOpen}
-                onToggle={() => setIsConfessionSectionOpen((open) => !open)}>
-                <Field
-                  multiline
-                  placeholder="Write your confession here..."
-                  value={confessionText}
-                  onChangeText={setConfessionText}
-                  maxLength={MAX_CONFESSION_LENGTH}
-                />
-                <Text className="mt-2 self-end text-xs text-gray-400" style={tabularNums}>
-                  {confessionText.length}/{MAX_CONFESSION_LENGTH}
+                <Text className="font-mono text-xs text-muted" style={tabularNums}>
+                  {formatDuration(displaySeconds)} / 02:00
                 </Text>
-                <Button
-                  label="Save to journal"
-                  variant="secondary"
-                  icon="lock"
-                  onPress={handleConfessionSubmit}
-                  loading={isSubmittingConfession}
-                  disabled={!confessionText.trim()}
-                  className="mt-3"
-                />
-              </CollapsibleCard>
+              </View>
 
-              <CollapsibleCard
-                icon="notes"
-                title="Type your thoughts"
-                open={isThoughtsSectionOpen}
-                onToggle={() => setIsThoughtsSectionOpen((open) => !open)}>
-                <Field
-                  multiline
-                  placeholder="Enter your thoughts here..."
-                  value={inputText}
-                  onChangeText={setInputText}
-                  maxLength={5000}
-                />
-                <Button
-                  label="Check my thoughts"
-                  variant="secondary"
-                  icon="search"
-                  onPress={handleTextSubmit}
-                  loading={isProcessing}
-                  disabled={!inputText.trim()}
-                  className="mt-3"
-                />
-              </CollapsibleCard>
+              <Button
+                label={isRecording ? 'Stop recording' : 'Record voice'}
+                icon={isRecording ? 'square' : 'mic'}
+                variant={isRecording ? 'danger' : 'primary'}
+                disabled={isRecorderBusy || isSaving}
+                onPress={isRecording ? stopRecording : startRecording}
+              />
 
-              {(transcription || result) && (
-                <Card>
-                  <Text className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-                    Your check-in
+              {pendingClip && !isRecording ? (
+                <View className="gap-2">
+                  <View className="flex-row items-center gap-2">
+                    <View className="flex-1">
+                      <AudioClipBar
+                        uri={pendingClip.uri}
+                        durationSec={pendingClip.durationSec}
+                        label="Play recorded clip"
+                        onError={setError}
+                      />
+                    </View>
+                    <Tappable
+                      onPress={handleDiscardClip}
+                      disabled={isSaving || isRecorderBusy}
+                      accessibilityLabel="Discard recorded clip"
+                      className={`h-10 w-10 items-center justify-center rounded-md border border-line bg-bg ${
+                        isSaving || isRecorderBusy ? 'opacity-40' : ''
+                      }`}>
+                      <PixelIcon name="close" size={16} color="#fca5a5" />
+                    </Tappable>
+                  </View>
+                  <Text className="font-mono text-xs text-muted">
+                    Clip ready ({formatDuration(pendingClip.durationSec)}). Add optional notes below
+                    or save directly.
                   </Text>
+                </View>
+              ) : null}
 
-                  {transcription && (
-                    <View className="mt-3 rounded-lg border border-white/5 bg-gray-900/60 p-3">
-                      <Text className="text-sm font-medium text-gray-400">What you said</Text>
-                      <Text className="mt-1 text-base leading-6 text-gray-200">
-                        {transcription}
-                      </Text>
-                    </View>
-                  )}
+              <Field
+                placeholder="Optional: type a note, todo, or tag context..."
+                value={draftText}
+                onChangeText={setDraftText}
+                multiline
+                maxLength={5000}
+              />
 
-                  {result && (
-                    <View
-                      className={
-                        result.crisis
-                          ? 'mt-3 rounded-lg border border-red-500/30 bg-red-950/60 p-4'
-                          : 'mt-3'
-                      }>
-                      {result.crisis && (
-                        <View className="mb-2 flex-row items-center gap-2">
-                          <MaterialIcons name="support-agent" size={20} color="#FCA5A5" />
-                          <Text className="text-base font-semibold text-white">
-                            Support right now
-                          </Text>
-                        </View>
-                      )}
-                      <Text className="text-base leading-6 text-gray-200">{result.message}</Text>
-                      {result.resources.length > 0 && (
-                        <View className="mt-4">
-                          <Text className="text-base font-semibold text-white">
-                            Where to get help
-                          </Text>
-                          <Text className="mt-1 text-sm text-gray-400">
-                            These helplines are for India.
-                          </Text>
-                          {result.resources.map((resource) => (
-                            <View
-                              key={resource.name}
-                              className="mt-2 flex-row items-start gap-3 rounded-lg bg-white/5 px-3 py-2.5">
-                              <MaterialIcons name="phone" size={18} color="#6EE7B7" />
-                              <View className="flex-1">
-                                <Text className="text-sm font-semibold text-white">
-                                  {resource.name}
-                                </Text>
-                                <Text className="mt-0.5 text-sm text-gray-300">
-                                  {resource.contact}
-                                </Text>
-                              </View>
-                            </View>
-                          ))}
-                          <Text className="mt-3 text-sm text-gray-400">
-                            If you or someone else is in immediate danger, call{' '}
-                            {result.emergency ?? 'your local emergency number'}.
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  )}
-                </Card>
-              )}
+              <View className="flex-row items-center justify-between gap-3">
+                <Text className="font-mono text-xs text-muted" style={tabularNums}>
+                  {draftText.length}/5000
+                </Text>
+                <Button
+                  label="Save entry"
+                  icon="check"
+                  variant="secondary"
+                  onPress={handleSave}
+                  loading={isSaving}
+                  disabled={(!draftText.trim() && !pendingClip) || isRecording || isRecorderBusy}
+                />
+              </View>
+            </Panel>
 
-              {error && <ErrorBanner>{error}</ErrorBanner>}
+            {error ? <ErrorBanner>{error}</ErrorBanner> : null}
 
-              <Text className="px-2 text-center text-xs leading-5 text-gray-700">
-                This is a check-in tool, not a diagnosis or a crisis service.
-              </Text>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </View>
-
-      <Sheet visible={helpVisible} onClose={() => setHelpVisible(false)} title="Get help now">
-        <Text className="text-sm text-gray-400">These helplines are for India.</Text>
-
-        {helpLoading && <ActivityIndicator className="mt-4" color="#6EE7B7" />}
-        {helpError && (
-          <View className="mt-4">
-            <ErrorBanner>{helpError}</ErrorBanner>
+            {latestNote ? (
+              <NoteCard
+                key={latestNote.id}
+                note={latestNote}
+                onToggleAction={handleToggleAction}
+                onAudioError={setError}
+              />
+            ) : (
+              <Panel className="items-start gap-2">
+                <Text className="font-pixel text-base text-ink">No entries yet</Text>
+                <Text className="font-mono text-xs leading-5 text-muted">
+                  Record a voice clip or type a note above. Audio and tasks stay on this device.
+                </Text>
+              </Panel>
+            )}
           </View>
-        )}
-
-        {helpResources.map((resource) => (
-          <View
-            key={resource.name}
-            className="mt-3 flex-row items-start gap-3 rounded-lg bg-white/5 px-3 py-3">
-            <MaterialIcons name="phone" size={18} color="#6EE7B7" />
-            <View className="flex-1">
-              <Text className="text-base font-semibold text-white">{resource.name}</Text>
-              <Text className="mt-0.5 text-sm text-gray-300">{resource.contact}</Text>
-            </View>
-          </View>
-        ))}
-
-        <Text className="mt-4 text-sm text-gray-300">
-          If you are in immediate danger, call {helpEmergency ?? '112'}.
-        </Text>
-      </Sheet>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

@@ -1,216 +1,207 @@
-import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { View, Text, Alert, ScrollView, Share, ActivityIndicator } from 'react-native';
+import { Platform, ScrollView, Share, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Button, Card, ErrorBanner, ScreenHeader, Tappable, tabularNums } from '~/components/ui';
-import { api, authHeaders, clearToken } from '~/utils/api';
+import { PixelIcon } from '~/components/pixel-icon';
+import {
+  Button,
+  ErrorBanner,
+  Panel,
+  ScreenHeader,
+  Sheet,
+  Tappable,
+  tabularNums,
+} from '~/components/ui';
+import { deleteNote, listNotes, MonoNote, wipeAllNotes } from '~/utils/db';
+import { formatDuration } from '~/utils/notes';
 
-interface Confession {
-  id: number;
-  content: string;
-  created_at: string;
-}
+type ConfirmAction = { type: 'delete'; note: MonoNote } | { type: 'wipe' } | null;
 
-const Profile = () => {
+export default function VaultScreen() {
   const router = useRouter();
-  const [confessions, setConfessions] = useState<Confession[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [notes, setNotes] = useState<MonoNote[]>([]);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadConfessions = async () => {
+  const load = useCallback(async () => {
     try {
-      const response = await api.get<Confession[]>('/confessions', undefined, {
-        headers: await authHeaders(),
-      });
-      if (!response.ok || !response.data) {
-        setError('Failed to load your journal.');
-        return;
-      }
-      setConfessions(response.data);
-      setError(null);
-    } catch (err) {
-      console.error('Failed to load journal', err);
-      setError('Failed to load your journal.');
-    } finally {
-      setIsLoading(false);
+      const items = await listNotes();
+      setNotes(items);
+    } catch {
+      setError('Could not load saved entries.');
     }
-  };
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      loadConfessions();
-    }, [])
+      load();
+    }, [load])
   );
 
-  const handleDelete = (id: number) => {
-    Alert.alert('Delete this entry?', 'This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const response = await api.delete(`/confessions/${id}`, undefined, {
-              headers: await authHeaders(),
-            });
-            if (!response.ok) {
-              throw new Error('Delete failed');
-            }
-            setConfessions((current) => current.filter((item) => item.id !== id));
-          } catch (err) {
-            console.error('Failed to delete confession', err);
-            Alert.alert('Error', 'Failed to delete this entry.');
-          }
-        },
-      },
-    ]);
-  };
-
-  const handleSignOut = async () => {
-    await api.post('/auth/logout', {}, { headers: await authHeaders() }).catch(() => {});
-    await clearToken();
-    router.replace('/auth');
-  };
-
   const handleExport = async () => {
-    try {
-      const response = await api.get('/account/export', undefined, {
-        headers: await authHeaders(),
-      });
-      if (!response.ok || !response.data) {
-        Alert.alert('Error', 'Failed to export your data.');
-        return;
+    setError(null);
+    const payload = JSON.stringify(notes, null, 2);
+
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      try {
+        const blob = new Blob([payload], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'mono-export.json';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch {
+        setError('Could not download export file.');
       }
+      return;
+    }
+
+    try {
       await Share.share({
-        title: 'My All Is Well data',
-        message: JSON.stringify(response.data, null, 2),
+        title: 'mono-export.json',
+        message: payload,
       });
-    } catch (err) {
-      console.error('Failed to export account', err);
-      Alert.alert('Error', 'Failed to export your data.');
+    } catch {
+      setError('Could not share export.');
     }
   };
 
-  const handleDeleteAccount = () => {
-    Alert.alert(
-      'Delete your account?',
-      'This permanently deletes your journal, messages, and check-ins.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const response = await api.delete('/account', undefined, {
-                headers: await authHeaders(),
-              });
-              if (!response.ok) {
-                throw new Error('Delete failed');
-              }
-              await clearToken();
-              router.replace('/auth');
-            } catch (err) {
-              console.error('Failed to delete account', err);
-              Alert.alert('Error', 'Failed to delete your account.');
-            }
-          },
-        },
-      ]
-    );
+  const handleConfirm = async () => {
+    if (!confirmAction || isBusy) return;
+    setIsBusy(true);
+    setError(null);
+    try {
+      if (confirmAction.type === 'delete') {
+        await deleteNote(confirmAction.note.id);
+        setNotes((prev) => prev.filter((n) => n.id !== confirmAction.note.id));
+      } else {
+        await wipeAllNotes();
+        setNotes([]);
+      }
+      setConfirmAction(null);
+    } catch {
+      setError('Could not update local storage.');
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const formatDate = (value: string) =>
-    new Date(value).toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
+  const storageLabel = Platform.OS === 'web' ? 'localStorage (browser)' : 'expo-sqlite (on-device)';
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-900">
-      <ScreenHeader title="Profile" subtitle="Your journal and data." />
+    <SafeAreaView className="flex-1 bg-bg">
+      <ScreenHeader
+        title="Vault"
+        subtitle="Local storage and data export"
+        right={
+          <Text className="font-mono text-xs text-muted" style={tabularNums}>
+            {notes.length} {notes.length === 1 ? 'entry' : 'entries'}
+          </Text>
+        }
+      />
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
         <View className="w-full max-w-2xl gap-4 self-center">
-          {error && <ErrorBanner>{error}</ErrorBanner>}
+          {error ? <ErrorBanner>{error}</ErrorBanner> : null}
 
-          <Card>
-            <View className="flex-row items-center justify-between gap-3">
-              <Text className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-                Your journal
-              </Text>
-              {!isLoading && (
-                <Text className="text-xs text-gray-400" style={tabularNums}>
-                  {confessions.length} {confessions.length === 1 ? 'entry' : 'entries'}
-                </Text>
-              )}
+          <Panel className="gap-2">
+            <Text className="font-pixel text-base text-ink">Runtime</Text>
+            <View className="flex-row justify-between border-t border-line pt-2">
+              <Text className="font-mono text-xs text-muted">Storage</Text>
+              <Text className="font-mono text-xs text-ink">{storageLabel}</Text>
             </View>
-            <Text className="mt-1 text-sm text-gray-400">
-              These entries are private to your account.
-            </Text>
+            <View className="flex-row justify-between border-t border-line pt-2">
+              <Text className="font-mono text-xs text-muted">Network</Text>
+              <Text className="font-mono text-xs text-ink">offline-first</Text>
+            </View>
+          </Panel>
 
-            {isLoading && <ActivityIndicator className="mt-4" color="#6EE7B7" />}
+          <Panel className="gap-2.5">
+            <Text className="font-pixel text-base text-ink">Data</Text>
+            <Button
+              label="Export JSON"
+              icon="download"
+              variant="secondary"
+              onPress={handleExport}
+              disabled={notes.length === 0}
+            />
+            <Button
+              label="View onboarding"
+              icon="sliders"
+              variant="ghost"
+              onPress={() => router.push('/onboarding')}
+            />
+            <Button
+              label="Wipe all notes"
+              icon="trash"
+              variant="danger"
+              onPress={() => setConfirmAction({ type: 'wipe' })}
+              disabled={notes.length === 0}
+            />
+          </Panel>
 
-            {!isLoading && confessions.length === 0 && (
-              <View className="items-center py-6">
-                <View className="h-12 w-12 items-center justify-center rounded-full bg-white/5">
-                  <MaterialIcons name="menu-book" size={24} color="#6EE7B7" />
-                </View>
-                <Text className="mt-3 text-base font-semibold text-white">Nothing saved yet</Text>
-                <Text className="mt-1 text-center text-sm text-gray-400">
-                  Share a confession from Home to start your journal.
-                </Text>
-              </View>
-            )}
-
-            {confessions.map((confession) => (
-              <View key={confession.id} className="mt-3 rounded-lg bg-white/5 p-3">
-                <View className="flex-row items-center justify-between gap-3">
-                  <Text className="text-xs text-gray-400">{formatDate(confession.created_at)}</Text>
+          <Panel className="gap-3">
+            <Text className="font-pixel text-base text-ink">Saved entries</Text>
+            {notes.length === 0 ? (
+              <Text className="font-mono text-xs text-muted">Nothing stored yet.</Text>
+            ) : (
+              notes.map((note) => (
+                <View
+                  key={note.id}
+                  className="flex-row items-start justify-between gap-3 border-t border-line pt-3">
+                  <View className="flex-1">
+                    <Text className="font-mono-medium text-xs text-ink">{note.title}</Text>
+                    <Text className="mt-0.5 font-mono text-xs text-muted" style={tabularNums}>
+                      {note.audioUri && note.durationSec > 0
+                        ? `${note.localDate} · ${formatDuration(note.durationSec)}`
+                        : note.localDate}
+                    </Text>
+                  </View>
                   <Tappable
-                    onPress={() => handleDelete(confession.id)}
-                    accessibilityLabel={`Delete entry from ${formatDate(confession.created_at)}`}
-                    hitSlop={8}
-                    className="rounded-full bg-white/10 p-2">
-                    <MaterialIcons name="delete-outline" size={18} color="#FCA5A5" />
+                    onPress={() => setConfirmAction({ type: 'delete', note })}
+                    accessibilityLabel={`Delete ${note.title}`}
+                    className="h-10 w-10 items-center justify-center rounded-md border border-line bg-bg">
+                    <PixelIcon name="trash" size={16} color="#fca5a5" />
                   </Tappable>
                 </View>
-                <Text className="mt-2 text-base leading-6 text-white">{confession.content}</Text>
-              </View>
-            ))}
-          </Card>
-
-          <Card>
-            <Text className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-              Your data
-            </Text>
-            <Text className="mt-1 text-sm text-gray-400">
-              Export a copy or delete everything stored for your account.
-            </Text>
-            <Button
-              label="Export my data"
-              variant="secondary"
-              icon="download"
-              onPress={handleExport}
-              className="mt-4"
-            />
-            <Button
-              label="Delete my account"
-              variant="danger"
-              icon="delete-outline"
-              onPress={handleDeleteAccount}
-              className="mt-2"
-            />
-          </Card>
-
-          <Button label="Sign out" variant="secondary" icon="logout" onPress={handleSignOut} />
+              ))
+            )}
+          </Panel>
         </View>
       </ScrollView>
+
+      <Sheet
+        visible={confirmAction !== null}
+        onClose={() => !isBusy && setConfirmAction(null)}
+        title={confirmAction?.type === 'wipe' ? 'Wipe all local notes?' : 'Delete entry?'}>
+        <View className="gap-4">
+          <Text className="font-mono text-xs leading-5 text-muted">
+            {confirmAction?.type === 'wipe'
+              ? 'This permanently removes every note and voice clip on this device.'
+              : 'This removes the entry and its saved audio clip from local storage.'}
+          </Text>
+          <View className="gap-2.5">
+            <Button
+              label={confirmAction?.type === 'wipe' ? 'Wipe all' : 'Delete'}
+              icon="trash"
+              variant="danger"
+              loading={isBusy}
+              onPress={handleConfirm}
+            />
+            <Button
+              label="Cancel"
+              variant="secondary"
+              disabled={isBusy}
+              onPress={() => setConfirmAction(null)}
+            />
+          </View>
+        </View>
+      </Sheet>
     </SafeAreaView>
   );
-};
-
-export default Profile;
+}

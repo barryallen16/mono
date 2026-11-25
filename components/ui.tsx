@@ -1,8 +1,8 @@
-import { MaterialIcons } from '@expo/vector-icons';
 import { ReactNode, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   PressableProps,
   ScrollView,
@@ -14,9 +14,7 @@ import {
   ViewProps,
 } from 'react-native';
 
-export { GradientBackground } from './gradient-background';
-
-type IconName = keyof typeof MaterialIcons.glyphMap;
+import { PixelIcon, PixelIconName } from './pixel-icon';
 
 export const tabularNums = StyleSheet.create({
   text: { fontVariant: ['tabular-nums'] },
@@ -27,7 +25,6 @@ type TappableProps = Omit<PressableProps, 'style' | 'children'> & {
   children?: ReactNode;
 };
 
-/** Pressable with the shared scale-on-press feedback. */
 export function Tappable({ className = '', disabled, children, ...rest }: TappableProps) {
   return (
     <Pressable
@@ -35,7 +32,7 @@ export function Tappable({ className = '', disabled, children, ...rest }: Tappab
       disabled={disabled}
       accessibilityRole="button"
       style={({ pressed }) => ({
-        transform: [{ scale: pressed && !disabled ? 0.96 : 1 }],
+        transform: [{ scale: pressed && !disabled ? 0.97 : 1 }],
       })}
       {...rest}>
       {children}
@@ -45,30 +42,30 @@ export function Tappable({ className = '', disabled, children, ...rest }: Tappab
 
 const buttonVariants = {
   primary: {
-    container: 'bg-emerald-300',
-    text: 'text-emerald-950',
-    icon: '#022C22',
+    container: 'bg-accent border border-accent',
+    text: 'text-bg font-pixel tracking-wider',
+    icon: '#09318d',
   },
   secondary: {
-    container: 'border border-white/10 bg-white/5',
-    text: 'text-white',
-    icon: '#E5E7EB',
+    container: 'border border-line bg-panel',
+    text: 'text-ink font-mono-medium',
+    icon: '#ffffff',
   },
   danger: {
-    container: 'border border-red-500/30 bg-red-500/10',
-    text: 'text-red-300',
-    icon: '#FCA5A5',
+    container: 'border border-danger/40 bg-danger/10',
+    text: 'text-red-300 font-mono-medium',
+    icon: '#fca5a5',
   },
   ghost: {
-    container: '',
-    text: 'text-gray-300',
-    icon: '#D1D5DB',
+    container: 'border border-transparent',
+    text: 'text-muted font-mono-medium',
+    icon: '#d4cef0',
   },
 } as const;
 
 type ButtonProps = Omit<TappableProps, 'children'> & {
   label: string;
-  icon?: IconName;
+  icon?: PixelIconName;
   variant?: keyof typeof buttonVariants;
   loading?: boolean;
   textClassName?: string;
@@ -90,24 +87,28 @@ export function Button({
   return (
     <Tappable
       disabled={inactive}
-      className={`min-h-12 flex-row items-center justify-center gap-2 rounded-full px-5 ${
+      className={`min-h-12 flex-row items-center justify-center gap-2.5 rounded-md px-4 ${
         styles.container
-      } ${inactive ? 'opacity-50' : ''} ${className}`}
+      } ${inactive ? 'opacity-40' : ''} ${className}`}
       {...rest}>
       {loading ? (
         <ActivityIndicator size="small" color={styles.icon} />
       ) : icon ? (
-        <MaterialIcons name={icon} size={20} color={styles.icon} />
+        <PixelIcon name={icon} size={16} color={styles.icon} />
       ) : null}
-      <Text className={`text-base font-semibold ${styles.text} ${textClassName}`}>{label}</Text>
+      <Text className={`text-sm ${styles.text} ${textClassName}`}>{label}</Text>
     </Tappable>
   );
 }
 
-export function Card({ className = '', padded = true, ...rest }: ViewProps & { padded?: boolean }) {
+export function Panel({
+  className = '',
+  padded = true,
+  ...rest
+}: ViewProps & { padded?: boolean }) {
   return (
     <View
-      className={`rounded-3xl border border-white/10 bg-gray-800 ${padded ? 'p-4' : ''} ${className}`}
+      className={`rounded-lg border border-line bg-panel ${padded ? 'p-4' : ''} ${className}`}
       {...rest}
     />
   );
@@ -120,11 +121,11 @@ export function Field({ className = '', multiline, onFocus, onBlur, ...rest }: F
 
   return (
     <TextInput
-      className={`rounded-lg border bg-gray-900 px-4 text-base text-white ${
+      className={`rounded-md border bg-bg px-3.5 font-mono text-sm text-ink ${
         multiline ? 'min-h-[112px] py-3' : 'min-h-12 py-3'
-      } ${isFocused ? 'border-emerald-300/70' : 'border-white/10'} ${className}`}
-      placeholderTextColor="#9CA3AF"
-      selectionColor="#6EE7B7"
+      } ${isFocused ? 'border-accent' : 'border-line'} ${className}`}
+      placeholderTextColor="#8fa4d8"
+      selectionColor="#9d91cc"
       multiline={multiline}
       textAlignVertical={multiline ? 'top' : 'center'}
       onFocus={(event) => {
@@ -150,11 +151,11 @@ export function ScreenHeader({
   right?: ReactNode;
 }) {
   return (
-    <View className="bg-gray-900 px-4 pb-3 pt-2">
+    <View className="border-b border-line bg-bg px-4 pb-3 pt-3">
       <View className="w-full max-w-2xl flex-row items-center justify-between gap-4 self-center">
         <View className="flex-1">
-          <Text className="text-2xl font-bold text-white">{title}</Text>
-          {subtitle ? <Text className="mt-0.5 text-sm text-gray-400">{subtitle}</Text> : null}
+          <Text className="font-pixel text-2xl tracking-wide text-ink">{title}</Text>
+          {subtitle ? <Text className="mt-1 font-mono text-xs text-muted">{subtitle}</Text> : null}
         </View>
         {right}
       </View>
@@ -164,21 +165,21 @@ export function ScreenHeader({
 
 export function ErrorBanner({ children }: { children: ReactNode }) {
   return (
-    <View className="flex-row items-start gap-2 rounded-xl border border-red-500/30 bg-red-950/80 px-4 py-3">
-      <MaterialIcons name="warning" size={18} color="#FCA5A5" />
-      <Text className="flex-1 text-sm leading-5 text-red-200">{children}</Text>
+    <View className="flex-row items-start gap-2.5 rounded-md border border-danger/40 bg-danger/10 px-3.5 py-3">
+      <PixelIcon name="info-box" size={16} color="#fca5a5" />
+      <Text className="flex-1 font-mono text-xs leading-5 text-red-200">{children}</Text>
     </View>
   );
 }
 
-export function Brand({ subtitle = 'A private check-in for hard days.' }: { subtitle?: string }) {
+export function Brand({ subtitle = 'Speak once. Keep everything.' }: { subtitle?: string }) {
   return (
-    <View className="items-center">
-      <View className="h-16 w-16 items-center justify-center rounded-full bg-emerald-300">
-        <MaterialIcons name="self-improvement" size={32} color="#022C22" />
+    <View className="items-start">
+      <View className="h-12 w-12 items-center justify-center rounded-md border border-accent bg-accent/15">
+        <PixelIcon name="mic" size={24} color="#9d91cc" />
       </View>
-      <Text className="mt-4 text-3xl font-bold text-white">All Is Well</Text>
-      <Text className="mt-1 text-center text-base text-gray-400">{subtitle}</Text>
+      <Text className="mt-4 font-pixel text-4xl tracking-wider text-ink">mono</Text>
+      <Text className="mt-1.5 font-mono text-sm leading-5 text-muted">{subtitle}</Text>
     </View>
   );
 }
@@ -195,21 +196,32 @@ export function Sheet({
   children: ReactNode;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View className="flex-1 items-center justify-center bg-black/70 p-5">
+    <Modal
+      visible={visible}
+      transparent
+      animationType={Platform.OS === 'web' ? 'none' : 'fade'}
+      onRequestClose={onClose}>
+      <View className="flex-1 items-center justify-center bg-black/80 p-5">
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessible={false} />
         <View
-          className="w-full max-w-md rounded-3xl border border-white/10 bg-gray-900 p-5"
+          className="w-full max-w-md rounded-lg border border-line bg-panel p-5"
           style={{ maxHeight: '85%' }}
           accessibilityViewIsModal>
-          <Text className="text-xl font-bold text-white">{title}</Text>
+          <View className="flex-row items-center justify-between gap-3">
+            <Text className="font-pixel text-xl tracking-wide text-ink">{title}</Text>
+            <Tappable
+              onPress={onClose}
+              accessibilityLabel="Close"
+              className="h-10 w-10 items-center justify-center rounded-md border border-line bg-bg">
+              <PixelIcon name="close" size={16} color="#d4cef0" />
+            </Tappable>
+          </View>
           <ScrollView
-            className="mt-3"
+            className="mt-4"
             style={{ flexShrink: 1 }}
             showsVerticalScrollIndicator={false}>
             {children}
           </ScrollView>
-          <Button variant="secondary" label="Close" onPress={onClose} className="mt-4" />
         </View>
       </View>
     </Modal>
