@@ -20,6 +20,7 @@ import {
   CactusStatus,
   getCactusStatus,
   isCactusAvailable,
+  prepareCactusModels,
   subscribeCactusProgress,
 } from '~/utils/cactus';
 import { createNote, listNotes, MonoNote, toggleActionItem } from '~/utils/db';
@@ -60,7 +61,10 @@ export default function CaptureScreen() {
   const [error, setError] = useState<string | null>(null);
   const [latestNote, setLatestNote] = useState<MonoNote | null>(null);
   const [cactusStatus, setCactusStatus] = useState<CactusStatus | null>(null);
-  const [modelProgressText, setModelProgressText] = useState<string | null>(null);
+  const [modelProgress, setModelProgress] = useState<{
+    model: string;
+    pct: number;
+  } | null>(null);
 
   const recordingRef = useRef<Audio.Recording | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -68,6 +72,7 @@ export default function CaptureScreen() {
   const pendingClipRef = useRef<PendingClip | null>(null);
   const busyRef = useRef(false);
   const mountedRef = useRef(true);
+  const autoPrepareRef = useRef(false);
 
   pendingClipRef.current = pendingClip;
 
@@ -85,7 +90,20 @@ export default function CaptureScreen() {
       refreshLatest();
       getCactusStatus()
         .then((status) => {
-          if (mountedRef.current) setCactusStatus(status);
+          if (!mountedRef.current) return;
+          setCactusStatus(status);
+          if (
+            status?.supported &&
+            !autoPrepareRef.current &&
+            (!status.whistleLoaded || !status.needleLoaded)
+          ) {
+            autoPrepareRef.current = true;
+            prepareCactusModels()
+              .then((ready) => {
+                if (mountedRef.current) setCactusStatus(ready);
+              })
+              .catch(() => {});
+          }
         })
         .catch(() => {});
       return () => {
@@ -99,9 +117,9 @@ export default function CaptureScreen() {
       if (!mountedRef.current) return;
       if (ev.phase === 'downloading') {
         const pct = Math.round(ev.progress * 100);
-        setModelProgressText(`${ev.model.toUpperCase()} ${pct}%`);
+        setModelProgress({ model: ev.model.toUpperCase(), pct });
       } else {
-        setModelProgressText(null);
+        setModelProgress(null);
         getCactusStatus()
           .then((status) => {
             if (mountedRef.current) setCactusStatus(status);
@@ -289,8 +307,8 @@ export default function CaptureScreen() {
   const displaySeconds = isRecording ? elapsedSec : (pendingClip?.durationSec ?? 0);
   const statusPillLabel = isRecording
     ? formatDuration(elapsedSec)
-    : modelProgressText
-      ? modelProgressText
+    : modelProgress
+      ? `${modelProgress.model} ${modelProgress.pct}%`
       : cactusStatus?.supported
         ? cactusStatus.whistleLoaded || cactusStatus.needleLoaded
           ? 'CACTUS LIVE'
@@ -305,7 +323,7 @@ export default function CaptureScreen() {
     <SafeAreaView className="flex-1 bg-bg">
       <ScreenHeader
         title="mono"
-        subtitle="Offline voice log"
+        subtitle="Whistle + Needle 3 voice log"
         right={
           <View className="flex-row items-center gap-2 rounded-md border border-line bg-panel px-2.5 py-1.5">
             <View className={`h-2 w-2 rounded-sm ${isRecording ? 'bg-danger' : 'bg-accent'}`} />
@@ -323,6 +341,22 @@ export default function CaptureScreen() {
           contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
           keyboardShouldPersistTaps="handled">
           <View className="w-full max-w-2xl gap-4 self-center">
+            {modelProgress ? (
+              <Panel className="gap-2">
+                <View className="flex-row items-center justify-between">
+                  <Text className="font-mono-medium text-xs text-ink">
+                    Downloading {modelProgress.model}
+                  </Text>
+                  <Text className="font-mono text-xs text-muted" style={tabularNums}>
+                    {modelProgress.pct}%
+                  </Text>
+                </View>
+                <View className="h-2 overflow-hidden rounded-sm border border-line bg-bg">
+                  <View className="h-full bg-accent" style={{ width: `${modelProgress.pct}%` }} />
+                </View>
+              </Panel>
+            ) : null}
+
             <Panel className="gap-4">
               <View className="flex-row items-center justify-between">
                 <Text className="font-pixel text-lg text-ink">
@@ -363,8 +397,8 @@ export default function CaptureScreen() {
                     </Tappable>
                   </View>
                   <Text className="font-mono text-xs text-muted">
-                    Clip ready ({formatDuration(pendingClip.durationSec)}). Add optional notes below
-                    or save directly.
+                    Clip ready ({formatDuration(pendingClip.durationSec)}). Tap Save entry to
+                    transcribe with Whistle and extract tasks.
                   </Text>
                 </View>
               ) : null}
@@ -413,7 +447,8 @@ export default function CaptureScreen() {
               <Panel className="items-start gap-2">
                 <Text className="font-pixel text-base text-ink">No entries yet</Text>
                 <Text className="font-mono text-xs leading-5 text-muted">
-                  Record a voice clip or type a note above. Audio and tasks stay on this device.
+                  Record a voice clip or type a note above. Whistle transcribes speech and Needle 3
+                  extracts tasks on your device.
                 </Text>
               </Panel>
             )}

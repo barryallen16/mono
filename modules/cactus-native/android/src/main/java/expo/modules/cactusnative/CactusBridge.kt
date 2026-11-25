@@ -16,7 +16,6 @@ object CactusBridge {
     keywordsUtf8: ByteArray?,
     wordTimestamps: Boolean
   ): ByteArray
-  @JvmStatic private external fun nativeEmbed(inputUtf8: ByteArray): FloatArray
 
   fun loadModel(path: String): Int = nativeLoadModel(path.toByteArray(Charsets.UTF_8))
 
@@ -41,6 +40,4 @@ object CactusBridge {
       ),
       Charsets.UTF_8
     )
-
-  fun embed(input: String): FloatArray = nativeEmbed(input.toByteArray(Charsets.UTF_8))
 }

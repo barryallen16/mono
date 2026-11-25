@@ -153,7 +153,6 @@ export async function startAudioPlayback(
       return;
     }
 
-    // Stop cleanly if interrupted or stalled instead of leaving Sound loaded.
     if (!status.isPlaying && (hasStarted || Date.now() - startedAt > 1000)) {
       stop();
       return;
@@ -179,7 +178,6 @@ export async function startAudioPlayback(
     sound = created.sound;
 
     if (Platform.OS === 'web') {
-      // ExponentAV.web omits media.onended, so poll status briefly on web.
       pollId = setInterval(() => {
         if (!sound || settled) return;
         sound

@@ -128,6 +128,11 @@ export function NoteCard({
   onToggleAction: (noteId: number, actionId: string) => void;
   onAudioError?: (message: string) => void;
 }) {
+  const [showFullTranscript, setShowFullTranscript] = useState(false);
+  const summary = note.summary.trim();
+  const transcript = note.transcript.trim();
+  const hasDistinctSummary = Boolean(summary && transcript && summary !== transcript);
+
   return (
     <Panel className="gap-2.5">
       <View className="flex-row items-center justify-between gap-3">
@@ -139,8 +144,27 @@ export function NoteCard({
         </Text>
       </View>
 
-      {note.transcript ? (
-        <Text className="font-mono text-sm leading-6 text-ink">{note.transcript}</Text>
+      {hasDistinctSummary ? (
+        <View className="gap-1.5">
+          <Text className="font-mono text-sm leading-6 text-ink">{summary}</Text>
+          <Tappable
+            onPress={() => setShowFullTranscript((v) => !v)}
+            accessibilityLabel={
+              showFullTranscript ? 'Hide full transcript' : 'Show full transcript'
+            }
+            className="self-start py-0.5">
+            <Text className="font-mono-medium text-xs text-accent">
+              {showFullTranscript ? 'Hide transcript' : 'Show transcript'}
+            </Text>
+          </Tappable>
+          {showFullTranscript ? (
+            <View className="rounded-md border border-line bg-bg px-3 py-2">
+              <Text className="font-mono text-xs leading-5 text-muted">{transcript}</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : transcript ? (
+        <Text className="font-mono text-sm leading-6 text-ink">{transcript}</Text>
       ) : null}
 
       {note.audioUri ? (

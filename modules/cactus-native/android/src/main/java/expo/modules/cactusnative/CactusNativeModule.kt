@@ -366,14 +366,5 @@ class CactusNativeModule : Module() {
         }
       }
     }
-
-    AsyncFunction("embedText") Coroutine { text: String ->
-      modelMutex.withLock {
-        withContext(Dispatchers.IO) {
-          ensureLoadedLocked(setOf("needle3"))
-          CactusBridge.embed(text).toList()
-        }
-      }
-    }
   }
 }

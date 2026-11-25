@@ -42,7 +42,7 @@ jbyteArray stdStringToBytes(JNIEnv* env, const char* str) {
   return out;
 }
 
-}  // namespace
+}
 
 extern "C" {
 
@@ -203,33 +203,4 @@ Java_expo_modules_cactusnative_CactusBridge_nativeTranscribe(
 #endif
 }
 
-JNIEXPORT jfloatArray JNICALL
-Java_expo_modules_cactusnative_CactusBridge_nativeEmbed(JNIEnv* env, jclass, jbyteArray jInput) {
-#if CACTUS_NATIVE_ENABLED
-  const std::string input = bytesToStdString(env, jInput);
-  std::lock_guard<std::mutex> lock(g_cactus_mutex);
-  const int dim = cactus_embed(input.c_str(), nullptr, 0, nullptr, 0);
-  if (dim <= 0) {
-    const char* err = cactus_last_error();
-    throwRuntime(env, (err && *err) ? err : "cactus_embed dimension query failed");
-    return nullptr;
-  }
-  std::vector<float> vec(static_cast<size_t>(dim));
-  const int rc = cactus_embed(input.c_str(), nullptr, 0, vec.data(), dim);
-  if (rc != dim) {
-    const char* err = cactus_last_error();
-    throwRuntime(env, (err && *err) ? err : "cactus_embed failed");
-    return nullptr;
-  }
-  jfloatArray result = env->NewFloatArray(dim);
-  if (result != nullptr) {
-    env->SetFloatArrayRegion(result, 0, dim, vec.data());
-  }
-  return result;
-#else
-  throwRuntime(env, "Cactus native library is unsupported on this ABI");
-  return nullptr;
-#endif
 }
-
-}  // extern "C"

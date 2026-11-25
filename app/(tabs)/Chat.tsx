@@ -9,7 +9,7 @@ import { ErrorBanner, Field, Panel, ScreenHeader, Tappable, tabularNums } from '
 import { stopActivePlayback } from '~/utils/audio';
 import { listNotes, MonoNote, searchNotes, toggleActionItem } from '~/utils/db';
 
-const FILTERS = ['all', 'voice', 'todo', 'idea', 'bug', 'ship'] as const;
+const FILTERS = ['all', 'voice', 'todo', 'bug', 'ship', 'idea', 'people', 'study', 'log'] as const;
 
 export default function SearchScreen() {
   const [query, setQuery] = useState('');

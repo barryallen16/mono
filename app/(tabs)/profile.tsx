@@ -36,7 +36,7 @@ export default function VaultScreen() {
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isModelBusy, setIsModelBusy] = useState(false);
-  const [modelProgress, setModelProgress] = useState<string | null>(null);
+  const [modelProgress, setModelProgress] = useState<{ label: string; pct: number } | null>(null);
   const [cactusStatus, setCactusStatus] = useState<CactusStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,7 +59,8 @@ export default function VaultScreen() {
   useEffect(() => {
     const sub = subscribeCactusProgress((ev) => {
       if (ev.phase === 'downloading') {
-        setModelProgress(`Downloading ${ev.model}: ${Math.round(ev.progress * 100)}%`);
+        const pct = Math.round(ev.progress * 100);
+        setModelProgress({ label: `Downloading ${ev.model}`, pct });
       } else {
         setModelProgress(null);
       }
@@ -200,7 +201,20 @@ export default function VaultScreen() {
                   </Text>
                 </View>
                 {modelProgress ? (
-                  <Text className="font-mono text-xs text-accent">{modelProgress}</Text>
+                  <View className="gap-1.5 pt-1">
+                    <View className="flex-row items-center justify-between">
+                      <Text className="font-mono text-xs text-accent">{modelProgress.label}</Text>
+                      <Text className="font-mono text-xs text-muted" style={tabularNums}>
+                        {modelProgress.pct}%
+                      </Text>
+                    </View>
+                    <View className="h-2 overflow-hidden rounded-sm border border-line bg-bg">
+                      <View
+                        className="h-full bg-accent"
+                        style={{ width: `${modelProgress.pct}%` }}
+                      />
+                    </View>
+                  </View>
                 ) : null}
                 <View className="mt-1 gap-2">
                   <Button

@@ -124,7 +124,9 @@ export function filterNotes(notes: MonoNote[], query: string): MonoNote[] {
   if (!q) return notes;
   const terms = q.split(/\s+/).filter(Boolean);
   return notes.filter((note) => {
-    const haystack = `${note.title} ${note.transcript} ${note.tags.join(' ')}`.toLowerCase();
+    const actionsText = note.actionItems.map((item) => item.text).join(' ');
+    const haystack =
+      `${note.title} ${note.summary} ${note.transcript} ${note.tags.join(' ')} ${actionsText}`.toLowerCase();
     return terms.every((term) => haystack.includes(term));
   });
 }

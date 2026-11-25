@@ -43,8 +43,8 @@ export function Tappable({ className = '', disabled, children, ...rest }: Tappab
 const buttonVariants = {
   primary: {
     container: 'bg-accent border border-accent',
-    text: 'text-bg font-pixel tracking-wider',
-    icon: '#09318d',
+    text: 'text-[#041236] font-pixel tracking-wider',
+    icon: '#041236',
   },
   secondary: {
     container: 'border border-line bg-panel',
