@@ -4,6 +4,8 @@
 
 Offline Android voice notebook that records locally, transcribes speech with fine-tuned Whistle, and extracts a title, category tags, and checkable tasks into SQLite.
 
+[Website](https://barryallen16.github.io/mono/) · [HF Collection](https://huggingface.co/collections/barryallen16/mono-6b0871a3c601170d2466fe8e) · [Releases](https://github.com/barryallen16/mono/releases)
+
 `v1.2.0` · `Android arm64-v8a` · `Expo SDK 52` · `Cactus 4.1.4`
 
 <p align="center">
@@ -19,7 +21,8 @@ bun install
 bun run build:preview
 ```
 
-First launch downloads roughly 93 MB of SHA-256-verified model weights (`whistle.cact` 29.3 MB + `needle3.cact` 63.4 MB) from Hugging Face. After that, capture, transcription, extraction, playback, and search work offline with zero accounts or telemetry.
+First launch downloads roughly 93 MB of SHA-256-verified model weights (`whistle.cact` 29.3 MB + `needle3.cact` 63.4 MB) from Hugging Face.
+After that, capture, transcription, extraction, playback, and search work offline with zero accounts or telemetry.
 
 ## How it works
 
@@ -37,11 +40,18 @@ Hold mic / swipe up to lock
 - **Local extraction (Needle 3):** Fine-tuned `needle3.cact` (W4A8) invokes `save_note` over C++ JNI to output a headline, boolean category flags (`#bug`, `#ship`, `#idea`, `#people`, `#study`), pending tasks (`#todo`), or `#log` when uncategorized.
 - **SQLite vault:** Notes and `.m4a` clips stay in `expo-sqlite` and app storage with `android:allowBackup="false"`. Switch between Notes and Tasks views, filter by keyword or `#tag` / `#open`, track the 14-day cadence grid, and export JSON via Storage Access Framework.
 
-## Benchmarks
+## Models & benchmarks
 
-**Whistle Svarah WER (lower is better)**
+Weights are hosted in the [mono collection](https://huggingface.co/collections/barryallen16/mono-6b0871a3c601170d2466fe8e) on Hugging Face:
 
-Evaluated on `barryallen16/whistle-svarah` (`29,346,671` bytes, 4-bit `.cact`) against base `whistle`:
+| Model | Task | Format / Size | Key benchmark |
+|---|---|---|---|
+| [`barryallen16/whistle-svarah`](https://huggingface.co/barryallen16/whistle-svarah) | Speech recognition | 4-bit `.cact` (29.35 MB) | 14.71% Svarah WER (vs 19.32% base) |
+| [`barryallen16/needle3-notes`](https://huggingface.co/barryallen16/needle3-notes) | Structured note extraction | W4A8 `.cact` (63.4 MB) | 93.3% task exact match, 78.7% tag F1 |
+
+### Whistle Svarah WER (lower is better)
+
+Evaluated on [`barryallen16/whistle-svarah`](https://huggingface.co/barryallen16/whistle-svarah) (`29,346,671` bytes, 4-bit `.cact`) against base `whistle`:
 
 | Benchmark | Base Whistle | Fine-tuned |
 |---|---|---|
@@ -49,9 +59,9 @@ Evaluated on `barryallen16/whistle-svarah` (`29,346,671` bytes, 4-bit `.cact`) a
 | 100-clip runtime `.cact` (Tamil subset) | 20.69% | 16.75% |
 | 1,047-clip Svarah held-out (greedy) | 20.58% | 17.2% |
 
-**Needle 3 on 30 held-out voice notes**
+### Needle 3 on 30 held-out voice notes
 
-Evaluated on `barryallen16/needle3-notes` against base `needle3`:
+Evaluated on [`barryallen16/needle3-notes`](https://huggingface.co/barryallen16/needle3-notes) against base `needle3`:
 
 | Metric | Base Needle 3 | Fine-tuned |
 |---|---|---|
