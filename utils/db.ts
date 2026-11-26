@@ -1,5 +1,5 @@
 import { deleteAllSavedAudioFiles, discardTempAudioClip, persistAudioClip } from './audio';
-import { processNoteWithCactus } from './cactus';
+import { getWhistleKeywords, processNoteWithCactus } from './cactus';
 import {
   buildNoteFields,
   computeStreak,
@@ -170,12 +170,15 @@ export function processSavedNote(noteId: number, draftText = ''): Promise<MonoNo
         ? note.transcript
         : '';
 
+    const keywords = hasExistingTranscript ? '' : await getWhistleKeywords();
     const fields = await processNoteWithCactus(
       effectiveDraft,
       note.durationSec,
       note.audioUri,
       note.localDate,
-      hasExistingTranscript ? { skipStt: true, existingTranscript: note.transcript } : undefined
+      hasExistingTranscript
+        ? { skipStt: true, existingTranscript: note.transcript }
+        : { keywords: keywords || null }
     );
 
     const latestRow = await db.getFirstAsync<NoteRow>('SELECT * FROM notes WHERE id = ?', noteId);

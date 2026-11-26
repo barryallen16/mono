@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import {
   AudioState,
   combineDraftAndTranscript,
@@ -20,12 +22,36 @@ import {
 export type { CactusProgressEvent, CactusStatus };
 export { clearCactusModels, getCactusStatus, prepareCactusModels, subscribeCactusProgress };
 
+const WHISTLE_KEYWORDS_KEY = 'whistle_keywords_v1';
+
+export function normalizeWhistleKeywords(value: string): string {
+  return value
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+export async function getWhistleKeywords(): Promise<string> {
+  try {
+    return (await AsyncStorage.getItem(WHISTLE_KEYWORDS_KEY)) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export async function setWhistleKeywords(value: string): Promise<string> {
+  const normalized = normalizeWhistleKeywords(value);
+  await AsyncStorage.setItem(WHISTLE_KEYWORDS_KEY, normalized);
+  return normalized;
+}
+
 export async function processNoteWithCactus(
   draftText: string,
   durationSec: number,
   savedAudioUri: string | null,
   localDate = formatLocalDate(),
-  options?: { existingTranscript?: string; skipStt?: boolean }
+  options?: { existingTranscript?: string; skipStt?: boolean; keywords?: string | null }
 ) {
   let heardText = '';
   let audioState: AudioState = 'none';
@@ -59,7 +85,8 @@ export async function processNoteWithCactus(
       lastError = 'Speech model not downloaded yet. Tap Retry once cached.';
     } else {
       try {
-        const stt = await transcribeWithWhistle(savedAudioUri, 'en');
+        const cleanKeywords = options?.keywords ? normalizeWhistleKeywords(options.keywords) : '';
+        const stt = await transcribeWithWhistle(savedAudioUri, 'en', cleanKeywords || null);
         heardText = stt?.text ?? '';
         audioState = 'done';
         sttEngine = 'whistle';
@@ -85,6 +112,9 @@ export async function processNoteWithCactus(
     } else {
       try {
         extracted = await extractWithNeedle3(finalTranscript, localDate);
+        if (extracted && !extracted.matched && !lastError) {
+          lastError = extracted.rawError || 'Needle 3 did not emit a save_note tool call.';
+        }
       } catch (err) {
         extracted = null;
         if (!lastError) {

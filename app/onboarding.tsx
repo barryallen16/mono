@@ -55,7 +55,7 @@ export default function Onboarding() {
     <SafeAreaView className="flex-1 bg-bg">
       <ScrollView contentContainerStyle={{ padding: 20, flexGrow: 1, justifyContent: 'center' }}>
         <View className="w-full max-w-md gap-6 self-center">
-          <Brand subtitle="Private offline voice notes. Record a thought and get a title, summary, and todo list on your phone." />
+          <Brand subtitle="Private offline voice notes. Record a thought and get a title, tags, and checkable todos right on your phone." />
 
           <Panel className="py-1">
             <SpecRow
@@ -66,7 +66,7 @@ export default function Onboarding() {
             <SpecRow
               icon="notes"
               title="Automatic todos and tags"
-              detail="Pulls out a title, summary, tags, and checkable tasks locally."
+              detail="Pulls out a title, tags, and checkable tasks locally."
             />
             <SpecRow
               icon="lock"

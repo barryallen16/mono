@@ -7,6 +7,7 @@ object CactusBridge {
 
   @JvmStatic external fun nativeIsSupported(): Boolean
   @JvmStatic external fun nativeLoadedModelsMask(): Int
+  @JvmStatic external fun nativeSetThreads(threads: Int)
   @JvmStatic private external fun nativeLoadModel(pathUtf8: ByteArray): Int
   @JvmStatic private external fun nativeInitText(systemPromptUtf8: ByteArray, toolsJsonUtf8: ByteArray): Int
   @JvmStatic private external fun nativeComplete(inputUtf8: ByteArray, maxNewTokens: Int): ByteArray

@@ -18,6 +18,8 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 private data class CactusModelSpec(
   val id: String,
@@ -31,8 +33,8 @@ private val MODEL_SPECS = listOf(
   CactusModelSpec(
     id = "whistle",
     filename = "whistle.cact",
-    url = "https://huggingface.co/Cactus-Compute/whistle/resolve/88cb00eeb8928ddbcd410b491584f938ba030b07/whistle.cact",
-    sha256 = "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb",
+    url = "https://huggingface.co/barryallen16/whistle-svarah/resolve/d605dca6f1c5e40e227c8c4289c96dc8bf1539d3/tuned.cact",
+    sha256 = "a5d30d55c65ee98325d0ea473e241a0bba073f9bdde43a2d35411ad0b2349bd3",
     maskBit = 2
   ),
   CactusModelSpec(
@@ -52,10 +54,7 @@ private val ALLOWED_TAGS = setOf("bug", "ship", "idea", "people", "todo", "study
 private val NOTE_TOOLS_JSON = JSONArray().put(
   JSONObject()
     .put("name", "save_note")
-    .put(
-      "description",
-      "Extract a short title, concise summary, relevant tags, and concrete action items from a voice log or text note."
-    )
+    .put("description", "Save a voice note with title, category tags, and action items.")
     .put(
       "parameters",
       JSONObject()
@@ -67,13 +66,7 @@ private val NOTE_TOOLS_JSON = JSONArray().put(
               "title",
               JSONObject()
                 .put("type", "string")
-                .put("description", "Short 3 to 7 word headline summarizing the note")
-            )
-            .put(
-              "summary",
-              JSONObject()
-                .put("type", "string")
-                .put("description", "One or two sentence summary of the note")
+                .put("description", "Short headline from the note")
             )
             .put(
               "tags",
@@ -88,27 +81,28 @@ private val NOTE_TOOLS_JSON = JSONArray().put(
                       JSONArray(ALLOWED_TAGS.toList())
                     )
                 )
-                .put("description", "Relevant tags for the note")
+                .put("description", "Matching category tags")
             )
             .put(
               "action_items",
               JSONObject()
                 .put("type", "array")
                 .put("items", JSONObject().put("type", "string"))
-                .put("description", "Actionable todo tasks mentioned in the note")
+                .put("description", "Todo tasks mentioned in the note")
             )
         )
-        .put("required", JSONArray(listOf("title", "tags", "action_items")))
+        .put("required", JSONArray(listOf("title")))
     )
 ).toString()
 
 private fun normalizeBoundaryWord(word: String): String =
-  word.trim { !it.isLetterOrDigit() }.lowercase().ifEmpty { word.lowercase() }
+  word.trim { !it.isLetterOrDigit() }.lowercase()
 
 private fun mergeChunkTranscripts(parts: List<String>): String {
   if (parts.isEmpty()) return ""
   val merged = mutableListOf<String>()
   val whitespace = Regex("\\s+")
+  val trailingPunct = Regex("[.!?,;:]$")
   for (part in parts) {
     val words = part.trim().split(whitespace).filter { it.isNotEmpty() }
     if (words.isEmpty()) continue
@@ -121,7 +115,9 @@ private fun mergeChunkTranscripts(parts: List<String>): String {
     for (k in maxOverlap downTo 1) {
       var matches = true
       for (i in 0 until k) {
-        if (normalizeBoundaryWord(merged[merged.size - k + i]) != normalizeBoundaryWord(words[i])) {
+        val left = normalizeBoundaryWord(merged[merged.size - k + i])
+        val right = normalizeBoundaryWord(words[i])
+        if (left.isEmpty() || left != right) {
           matches = false
           break
         }
@@ -131,9 +127,26 @@ private fun mergeChunkTranscripts(parts: List<String>): String {
         break
       }
     }
+    if (
+      overlap > 0 &&
+      trailingPunct.containsMatchIn(words[overlap - 1]) &&
+      !trailingPunct.containsMatchIn(merged.last())
+    ) {
+      merged[merged.lastIndex] = words[overlap - 1]
+    }
     merged.addAll(words.drop(overlap))
   }
   return merged.joinToString(" ")
+}
+
+private fun formatDateFact(localDate: String): String {
+  return try {
+    val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
+    val parsed = parser.parse(localDate) ?: return localDate
+    SimpleDateFormat("yyyy-MM-dd EEE", Locale.US).format(parsed)
+  } catch (_: Exception) {
+    localDate
+  }
 }
 
 class CactusNativeModule : Module() {
@@ -143,6 +156,7 @@ class CactusNativeModule : Module() {
   private val downloadMutexes = MODEL_SPECS.associate { it.id to Mutex() }
   private val inferenceMutex = Mutex()
   private var initializedDate: String? = null
+  private var threadsConfigured = false
 
   private fun cacheDir(): File = File(context.filesDir, "cactus").apply { mkdirs() }
 
@@ -313,6 +327,11 @@ class CactusNativeModule : Module() {
             )
           )
           withContext(Dispatchers.IO) {
+            if (!threadsConfigured) {
+              val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+              CactusBridge.nativeSetThreads(threads)
+              threadsConfigured = true
+            }
             CactusBridge.loadModel(file.absolutePath)
           }
           sendEvent(
@@ -362,12 +381,18 @@ class CactusNativeModule : Module() {
       }
     }
 
-    AsyncFunction("transcribeFile") Coroutine { uri: String, language: String? ->
+    AsyncFunction("transcribeFile") Coroutine { uri: String, language: String?, keywords: String? ->
       ensureLoadedLocked(setOf("whistle"))
       val samples = withContext(Dispatchers.IO) { AudioDecoder.decodeToMono16k(context, uri) }
       if (samples.isEmpty()) {
         return@Coroutine mapOf("text" to "", "language" to (language ?: ""), "chunks" to 0)
       }
+      val normalizedKeywords = keywords
+        ?.split(Regex("\\r?\\n"))
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.joinToString("\n")
+        ?.takeIf { it.isNotEmpty() }
 
       inferenceMutex.withLock {
         withContext(Dispatchers.IO) {
@@ -383,7 +408,7 @@ class CactusNativeModule : Module() {
             } else {
               samples.copyOfRange(offset, end)
             }
-            val rawJson = CactusBridge.transcribe(slice, language, null, false)
+            val rawJson = CactusBridge.transcribe(slice, language, normalizedKeywords, false)
             val parsed = try {
               JSONObject(rawJson)
             } catch (err: Exception) {
@@ -418,11 +443,13 @@ class CactusNativeModule : Module() {
       inferenceMutex.withLock {
         withContext(Dispatchers.IO) {
           if (initializedDate != localDate) {
-            val systemPrompt = "date: $localDate\nExtract a structured voice note using save_note."
+            val systemPrompt = "date: ${formatDateFact(localDate)}"
             CactusBridge.initText(systemPrompt, NOTE_TOOLS_JSON)
             initializedDate = localDate
           }
-          val rawJson = CactusBridge.complete(text, 384)
+          val cleanInput = text.trim().trim('"', '\'').ifEmpty { text.trim() }.take(12_000)
+          val rawJson = CactusBridge.complete(cleanInput, 640)
+          val preview = rawJson.trim().replace(Regex("\\s+"), " ").take(160)
           val root = try {
             JSONObject(rawJson)
           } catch (_: Exception) {
@@ -432,13 +459,29 @@ class CactusNativeModule : Module() {
               "summary" to "",
               "tags" to emptyList<String>(),
               "actionItems" to emptyList<String>(),
-              "confidence" to null
+              "confidence" to null,
+              "rawError" to "Needle 3 invalid JSON: ${preview.ifEmpty { "<empty>" }}"
             )
           }
           val calls = root.optJSONArray("function_calls")
-          val firstCall = calls?.optJSONObject(0)
+          val suppressed = root.optJSONArray("suppressed_calls")
+          val firstCall = calls?.optJSONObject(0) ?: suppressed?.optJSONObject(0)
+          val callName = firstCall?.optString("name", "") ?: ""
+          val validCall = firstCall != null && (callName.isEmpty() || callName == "save_note")
 
-          val args = firstCall?.optJSONObject("arguments") ?: JSONObject()
+          val args = if (!validCall) {
+            JSONObject()
+          } else {
+            when (val rawArgs = firstCall?.opt("arguments")) {
+              is JSONObject -> rawArgs
+              is String -> try {
+                JSONObject(rawArgs)
+              } catch (_: Exception) {
+                JSONObject()
+              }
+              else -> JSONObject()
+            }
+          }
           val tagsArr = args.optJSONArray("tags") ?: JSONArray()
           val itemsArr = args.optJSONArray("action_items") ?: JSONArray()
 
@@ -458,12 +501,13 @@ class CactusNativeModule : Module() {
           val confidence = rawConfidence?.takeIf { !it.isNaN() && !it.isInfinite() }
 
           mapOf(
-            "matched" to (firstCall != null),
+            "matched" to validCall,
             "title" to args.optString("title", "").trim(),
             "summary" to args.optString("summary", "").trim(),
             "tags" to tags,
             "actionItems" to actionItems,
-            "confidence" to confidence
+            "confidence" to confidence,
+            "rawError" to if (validCall) null else "Needle 3 missed save_note: ${preview.ifEmpty { "<empty>" }}"
           )
         }
       }

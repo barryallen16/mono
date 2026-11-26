@@ -65,6 +65,14 @@ Java_expo_modules_cactusnative_CactusBridge_nativeLoadedModelsMask(JNIEnv*, jcla
 #endif
 }
 
+JNIEXPORT void JNICALL
+Java_expo_modules_cactusnative_CactusBridge_nativeSetThreads(JNIEnv*, jclass, jint threads) {
+#if CACTUS_NATIVE_ENABLED
+  std::lock_guard<std::mutex> lock(g_cactus_mutex);
+  cactus_set_threads(static_cast<int>(threads));
+#endif
+}
+
 JNIEXPORT jint JNICALL
 Java_expo_modules_cactusnative_CactusBridge_nativeLoadModel(JNIEnv* env, jclass, jbyteArray jPath) {
 #if CACTUS_NATIVE_ENABLED

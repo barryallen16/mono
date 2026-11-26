@@ -5,13 +5,23 @@ import { Linking, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PixelIcon } from '~/components/pixel-icon';
-import { Button, ErrorBanner, Panel, ScreenHeader, Sheet, tabularNums } from '~/components/ui';
+import {
+  Button,
+  ErrorBanner,
+  Field,
+  Panel,
+  ScreenHeader,
+  Sheet,
+  tabularNums,
+} from '~/components/ui';
 import { exportNotesToFile } from '~/utils/audio';
 import {
   CactusStatus,
   clearCactusModels,
   getCactusStatus,
+  getWhistleKeywords,
   prepareCactusModels,
+  setWhistleKeywords,
   subscribeCactusProgress,
 } from '~/utils/cactus';
 import { computeStreak, formatLocalDate, listNotes, MonoNote, wipeAllNotes } from '~/utils/db';
@@ -55,15 +65,22 @@ export default function VaultScreen() {
   const [isModelBusy, setIsModelBusy] = useState(false);
   const [modelProgress, setModelProgress] = useState<ModelProgressState | null>(null);
   const [cactusStatus, setCactusStatus] = useState<CactusStatus | null>(null);
+  const [keywordsText, setKeywordsText] = useState('');
+  const [keywordsNotice, setKeywordsNotice] = useState<string | null>(null);
   const [cacheNotice, setCacheNotice] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [items, status] = await Promise.all([listNotes(), getCactusStatus().catch(() => null)]);
+      const [items, status, savedKeywords] = await Promise.all([
+        listNotes(),
+        getCactusStatus().catch(() => null),
+        getWhistleKeywords().catch(() => ''),
+      ]);
       setNotes(items);
       setCactusStatus(status);
+      setKeywordsText(savedKeywords);
     } catch {
       setError('Could not load saved entries.');
     }
@@ -139,6 +156,18 @@ export default function VaultScreen() {
       setError('Could not clear cached models.');
     } finally {
       setIsModelBusy(false);
+    }
+  };
+
+  const handleSaveKeywords = async () => {
+    setError(null);
+    setKeywordsNotice(null);
+    try {
+      const saved = await setWhistleKeywords(keywordsText);
+      setKeywordsText(saved);
+      setKeywordsNotice(saved ? 'Speech keywords saved.' : 'Speech keywords cleared.');
+    } catch {
+      setError('Could not save speech keywords.');
     }
   };
 
@@ -307,7 +336,7 @@ export default function VaultScreen() {
                     label={
                       cactusStatus.whistleCached && cactusStatus.needleCached
                         ? 'Warm up on-device models'
-                        : 'Download Whistle + Needle 3 (~52 MB)'
+                        : 'Download Whistle + Needle 3 (~64 MB)'
                     }
                     icon="zap"
                     variant="secondary"
@@ -323,6 +352,31 @@ export default function VaultScreen() {
                       onPress={handleClearModels}
                     />
                   ) : null}
+                </View>
+                <View className="mt-2 gap-2 border-t border-line pt-2.5">
+                  <Text className="font-mono text-xs text-muted">
+                    Speech keywords (comma or newline separated)
+                  </Text>
+                  <Field
+                    placeholder="Chennai, Cactus, SQLite"
+                    value={keywordsText}
+                    onChangeText={(next) => {
+                      setKeywordsText(next);
+                      setKeywordsNotice(null);
+                    }}
+                    multiline
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  {keywordsNotice ? (
+                    <Text className="font-mono text-xs text-accent">{keywordsNotice}</Text>
+                  ) : null}
+                  <Button
+                    label="Save keywords"
+                    icon="check"
+                    variant="secondary"
+                    onPress={handleSaveKeywords}
+                  />
                 </View>
               </>
             ) : null}

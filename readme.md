@@ -8,7 +8,7 @@
       <p>
         Offline voice log for Android built with Expo SDK 52 and the Cactus 4.1.4 native runtime.
         <br />
-        Hold to record a thought, then extract a title, summary, tags, and checkable tasks right on your phone.
+        Hold to record a thought, then extract a title, tags, and checkable tasks right on your phone.
       </p>
       <p>
         <code>v1.0.1</code> &middot;
@@ -37,7 +37,7 @@
       <p>
         A Kotlin <code>MediaCodec</code> decoder resamples recorded audio to 16 kHz mono PCM using Hann-windowed sinc interpolation.
         <br />
-        <code>whistle.cact</code> (16.9 MB) transcribes 30-second windows with 1.5-second overlap and 6-word boundary deduplication.
+        <code>whistle.cact</code> (29.3 MB, Svarah fine-tuned) transcribes 30-second windows with 1.5-second overlap and 6-word boundary deduplication.
       </p>
     </td>
   </tr>
@@ -47,7 +47,7 @@
       <p>
         <code>needle3.cact</code> (35 MB) runs constrained <code>save_note</code> JSON tool calling via C++ JNI.
         <br />
-        It pulls out a short title, summary, allowed tags (<code>#bug</code>, <code>#ship</code>, <code>#idea</code>, <code>#people</code>, <code>#todo</code>, <code>#study</code>, <code>#log</code>), and action items.
+        It pulls out a short title, allowed tags (<code>#bug</code>, <code>#ship</code>, <code>#idea</code>, <code>#people</code>, <code>#todo</code>, <code>#study</code>, <code>#log</code>), and action items.
       </p>
     </td>
     <td width="50%" valign="top">
@@ -88,7 +88,7 @@ Hold mic / swipe up to lock
       <h3>Fallbacks and constraints</h3>
       <ul>
         <li>If models are not cached yet, notes queue locally until Whistle and Needle 3 finish downloading.</li>
-        <li>First-time on-device model setup requires downloading roughly 52 MB total over the network before offline use.</li>
+        <li>First-time on-device model setup requires downloading roughly 64 MB total over the network before offline use.</li>
         <li>Voice recordings cap at 120 seconds per clip and save locally when stopped.</li>
       </ul>
     </td>

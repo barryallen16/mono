@@ -33,13 +33,18 @@ export interface CactusExtractedNote {
   tags: string[];
   actionItems: string[];
   confidence: number | null;
+  rawError?: string | null;
 }
 
 interface CactusNativeModuleType {
   getStatus(): Promise<CactusStatus>;
   prepareModels(): Promise<CactusStatus>;
   clearModels(): Promise<CactusStatus>;
-  transcribeFile(uri: string, language?: string | null): Promise<CactusTranscribeResult>;
+  transcribeFile(
+    uri: string,
+    language?: string | null,
+    keywords?: string | null
+  ): Promise<CactusTranscribeResult>;
   extractNote(text: string, localDate: string): Promise<CactusExtractedNote>;
   addListener(
     eventName: 'onModelProgress',
@@ -70,10 +75,11 @@ export async function clearCactusModels(): Promise<CactusStatus | null> {
 
 export async function transcribeWithWhistle(
   uri: string,
-  language: string | null = 'en'
+  language: string | null = 'en',
+  keywords: string | null = null
 ): Promise<CactusTranscribeResult | null> {
   if (!NativeCactus) return null;
-  return NativeCactus.transcribeFile(uri, language);
+  return NativeCactus.transcribeFile(uri, language, keywords);
 }
 
 export async function extractWithNeedle3(
