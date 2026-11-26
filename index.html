@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mono - Offline Android voice notes and task extraction</title>
+  <meta name="description" content="Offline Android voice notebook. Record locally, transcribe speech with fine-tuned Whistle, and extract titles, tags, and checkable tasks into SQLite." />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="mono - Offline Android voice notes and task extraction" />
+  <meta property="og:description" content="Offline Android voice notebook. Record locally, transcribe speech with fine-tuned Whistle, and extract titles, tags, and checkable tasks into SQLite." />
+  <meta property="og:url" content="https://barryallen16.github.io/mono/" />
+  <meta property="og:image" content="https://barryallen16.github.io/mono/media/icon.png" />
+  <meta name="twitter:card" content="summary" />
+  <link rel="icon" type="image/png" href="media/icon.png" />
+  <link rel="preload" as="image" href="media/walkthrough.gif" fetchpriority="high" />
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+  <style>
+    @font-face {
+      font-family: 'GeistPixel-Square';
+      src: url('media/fonts/GeistPixel-Square.ttf') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'GeistMono';
+      src: url('media/fonts/GeistMono-Regular.ttf') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'GeistMono';
+      src: url('media/fonts/GeistMono-Medium.ttf') format('truetype');
+      font-weight: 500;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    :root {
+      --bg: #09318d;
+      --panel: #07256c;
+      --elevated: #0b379c;
+      --line: #5b82e0;
+      --line-subtle: #2b59c3;
+      --ink: #ffffff;
+      --muted: #d4cef0;
+      --accent: #9d91cc;
+      --accent-hover: #afa4da;
+      --on-accent: #041236;
+      --success: #86efac;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      background-color: var(--bg);
+      color: var(--ink);
+      font-family: 'GeistMono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      scroll-behavior: auto;
+    }
+
+    body {
+      margin: 0;
+      background-color: var(--bg);
+      color: var(--ink);
+      font-size: clamp(0.95rem, 0.92rem + 0.16vw, 1.05rem);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    :where(.grid, .flex) > * {
+      min-width: 0;
+    }
+
+    .font-pixel {
+      font-family: 'GeistPixel-Square', 'GeistMono', monospace;
+      font-weight: 400;
+    }
+
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .hero-title {
+      font-size: clamp(2rem, 1.45rem + 2.2vw, 3.25rem);
+      line-height: 1.12;
+      letter-spacing: -0.01em;
+    }
+
+    .section-title {
+      font-size: clamp(1.5rem, 1.2rem + 1.1vw, 2.1rem);
+      line-height: 1.2;
+    }
+
+    .prose-limit {
+      max-width: 60ch;
+    }
+
+    :where(a, button, [tabindex="0"]):focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .cta-primary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.625rem;
+      min-height: 48px;
+      padding: 0.75rem 1.5rem;
+      border-radius: 6px;
+      background-color: var(--accent);
+      color: var(--on-accent);
+      font-family: 'GeistPixel-Square', 'GeistMono', monospace;
+      font-size: 1rem;
+      text-decoration: none;
+      transition: background-color 140ms ease;
+    }
+
+    .cta-primary:hover {
+      background-color: var(--accent-hover);
+    }
+
+    .btn-outline {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      min-height: 44px;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      background-color: var(--panel);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      font-family: 'GeistMono', monospace;
+      font-weight: 500;
+      font-size: 0.85rem;
+      text-decoration: none;
+      white-space: nowrap;
+      transition: background-color 140ms ease, border-color 140ms ease;
+    }
+
+    .btn-outline:hover {
+      background-color: var(--elevated);
+      border-color: var(--accent);
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .cta-primary,
+      .btn-outline {
+        transition:
+          background-color 140ms ease,
+          border-color 140ms ease,
+          transform 130ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .cta-primary:active,
+      .btn-outline:active {
+        transform: translateY(1px);
+      }
+    }
+
+    /* Walkthrough phone frame */
+    .phone-frame {
+      width: min(100%, 304px);
+      border-radius: 16px;
+      padding: 12px;
+      background-color: var(--panel);
+      border: 1px solid var(--line);
+    }
+
+    .phone-screen {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 9 / 20;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .phone-screen video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* App panel & responsive benchmark table */
+    .app-panel {
+      background-color: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 1.5rem;
+    }
+
+    .table-wrapper {
+      overflow: auto;
+      max-inline-size: 100%;
+      container-type: inline-size;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background-color: var(--panel);
+    }
+
+    .bench-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 0.92rem;
+      --label-2: "Base";
+      --label-3: "Fine-tuned";
+    }
+
+    .bench-table--whistle {
+      --label-2: "Base Whistle";
+      --label-3: "Fine-tuned";
+    }
+
+    .bench-table--needle {
+      --label-2: "Base Needle 3";
+      --label-3: "Fine-tuned";
+    }
+
+    .bench-table caption {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .bench-table thead th {
+      position: sticky;
+      inset-block-start: 0;
+      z-index: 1;
+      text-align: left;
+      padding: 0.875rem 1.25rem;
+      background-color: var(--elevated);
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .bench-table tbody th,
+    .bench-table tbody td {
+      padding: 0.9rem 1.25rem;
+      border-bottom: 1px solid var(--line-subtle);
+      text-align: left;
+    }
+
+    .bench-table tbody tr:last-child th,
+    .bench-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .bench-table tbody th {
+      font-weight: 500;
+      color: var(--ink);
+    }
+
+    .bench-table tbody td {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .tag-chip {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border-radius: 2px;
+      background-color: var(--elevated);
+      border: 1px solid var(--line-subtle);
+      color: var(--ink);
+      font-size: 0.88em;
+    }
+
+    @container (width < 520px) {
+      .bench-table,
+      .bench-table thead,
+      .bench-table tbody,
+      .bench-table tr,
+      .bench-table th,
+      .bench-table td {
+        display: block;
+      }
+
+      .bench-table thead {
+        display: none;
+      }
+
+      .bench-table tbody tr {
+        padding: 0.875rem 0.75rem;
+        border-bottom: 1px solid var(--line-subtle);
+      }
+
+      .bench-table tbody tr:last-child {
+        border-bottom: 0;
+      }
+
+      .bench-table tbody th,
+      .bench-table tbody td {
+        padding: 0.25rem 0;
+        border-bottom: 0;
+      }
+
+      .bench-table tbody th {
+        margin-bottom: 0.35rem;
+        color: var(--ink);
+      }
+
+      .bench-table tbody td:nth-child(2)::before {
+        content: var(--label-2) ": ";
+        color: var(--muted);
+      }
+
+      .bench-table tbody td:nth-child(3)::before {
+        content: var(--label-3) ": ";
+        color: var(--muted);
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="border-b border-[#2b59c3]">
+    <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-4 sm:px-8">
+      <a href="#" class="inline-flex min-h-[44px] items-center gap-3 text-[#ffffff] no-underline">
+        <svg width="52" height="20" viewBox="0 0 52 20" fill="none" aria-hidden="true">
+          <path d="M11.1532 0.999624V18.0156H9.56925V2.65562H6.97725V18.0156H5.32125V2.65562H2.70525V18.0156H1.00125V0.999624H11.1532ZM24.1948 0.999624V18.0156H14.0428V0.999624H24.1948ZM15.8188 16.2396H22.5388V2.65562H15.8188V16.2396ZM37.2364 0.999624V18.0156H35.6524V2.65562H28.7884V18.0156H27.0844V0.999624H37.2364ZM50.2779 0.999624V18.0156H40.1259V0.999624H50.2779ZM41.9019 16.2396H48.6219V2.65562H41.9019V16.2396Z" fill="#ffffff"/>
+        </svg>
+        <span class="sr-only">mono</span>
+      </a>
+      <nav aria-label="Primary links">
+        <ul class="m-0 flex list-none items-center gap-4 p-0 text-sm sm:gap-6">
+          <li class="hidden sm:block">
+            <a href="#pipeline" class="inline-flex min-h-[44px] items-center text-[#d4cef0] no-underline transition-colors hover:text-[#ffffff]">How it works</a>
+          </li>
+          <li class="hidden sm:block">
+            <a href="#benchmarks" class="inline-flex min-h-[44px] items-center text-[#d4cef0] no-underline transition-colors hover:text-[#ffffff]">Benchmarks</a>
+          </li>
+          <li>
+            <a href="https://github.com/barryallen16/mono" class="btn-outline">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+              </svg>
+              <span>Star on GitHub</span>
+            </a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="mx-auto grid min-h-[calc(100dvh-77px)] max-w-6xl grid-cols-1 items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-12 lg:py-16">
+      <div class="space-y-7 lg:col-span-7">
+        <p class="text-xs uppercase tracking-widest text-[#86efac]">
+          v1.2.0 &middot; Android offline voice log
+        </p>
+        <h1 class="font-pixel hero-title m-0 text-[#ffffff]">
+          Offline voice notes that sort themselves into tasks.
+        </h1>
+        <p class="prose-limit m-0 text-[#d4cef0]">
+          Record up to two minutes on Android, transcribe speech locally with Whistle, and extract a short title, tags, and checkable todos into SQLite with no cloud account.
+        </p>
+        <div class="space-y-3 pt-1">
+          <a href="https://github.com/barryallen16/mono/releases/download/v1.2.0/mono-v1.2.0-arm64-v8a.apk" class="cta-primary w-full sm:w-auto">
+            Download APK (v1.2.0)
+          </a>
+          <p class="m-0 text-xs text-[#d4cef0]">
+            Android arm64-v8a &middot; ~93 MB one-time model cache &middot; Runs locally after setup
+          </p>
+        </div>
+      </div>
+
+      <figure class="m-0 flex flex-col items-center gap-3 lg:col-span-5 lg:items-end">
+        <div class="phone-frame">
+          <div class="phone-screen">
+            <video
+              width="576"
+              height="1280"
+              poster="media/walkthrough.gif"
+              autoplay
+              muted
+              loop
+              playsinline
+              preload="metadata"
+              aria-label="17-second Android walkthrough showing hold-to-record capture, local transcription, and the Tasks toggle"
+            >
+              <source src="media/walkthrough.mp4" type="video/mp4" />
+            </video>
+            <noscript>
+              <img
+                src="media/walkthrough.gif"
+                width="320"
+                height="711"
+                alt="Android walkthrough of mono recording a voice note and extracting tasks"
+              />
+            </noscript>
+          </div>
+        </div>
+        <figcaption class="w-full max-w-[304px] text-center text-xs leading-snug text-[#d4cef0] lg:text-left">
+          17s Android walkthrough: capture, local extraction, Tasks view.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="pipeline" class="border-t border-[#2b59c3]">
+      <div class="mx-auto grid max-w-6xl grid-cols-1 gap-10 px-5 py-20 sm:px-8 lg:grid-cols-12">
+        <div class="space-y-4 lg:col-span-5">
+          <p class="text-xs uppercase tracking-widest text-[#86efac]">Pipeline</p>
+          <h2 class="font-pixel section-title m-0 text-[#ffffff]">
+            Three local steps from thumb press to SQLite
+          </h2>
+          <p class="prose-limit m-0 text-sm text-[#d4cef0]">
+            No audio stream, transcript, or note leaves the device. Network access happens once at setup to download and SHA-256 verify the model weights.
+          </p>
+        </div>
+
+        <ol class="m-0 list-none divide-y divide-[#2b59c3] border-y border-[#5b82e0] bg-[#07256c] p-0 lg:col-span-7 rounded-md">
+          <li class="px-6 py-6">
+            <div class="mb-2 text-xs text-[#86efac]">01 / CAPTURE</div>
+            <h3 class="m-0 mb-2 text-base font-medium text-[#ffffff]">Hold to record, swipe to lock</h3>
+            <p class="prose-limit m-0 text-sm text-[#d4cef0]">
+              Hold the bottom mic button for quick thoughts up to 120 seconds, swipe up to lock hands-free, slide left to discard, or type a note directly.
+            </p>
+          </li>
+          <li class="px-6 py-6">
+            <div class="mb-2 text-xs text-[#86efac]">02 / SPEECH</div>
+            <h3 class="m-0 mb-2 text-base font-medium text-[#ffffff]">On-device speech with Whistle</h3>
+            <p class="prose-limit m-0 text-sm text-[#d4cef0]">
+              Kotlin <code class="tag-chip">MediaCodec</code> resamples recordings to 16 kHz mono PCM with Hann-windowed sinc interpolation. Fine-tuned Svarah <code class="tag-chip">whistle.cact</code> (29.3 MB) transcribes 30-second windows with 1.5-second overlap, 6-word boundary deduplication, and custom Vault keywords.
+            </p>
+          </li>
+          <li class="px-6 py-6">
+            <div class="mb-2 text-xs text-[#86efac]">03 / EXTRACTION</div>
+            <h3 class="m-0 mb-2 text-base font-medium text-[#ffffff]">Local task extraction with Needle 3</h3>
+            <p class="prose-limit m-0 text-sm text-[#d4cef0]">
+              Fine-tuned <code class="tag-chip">needle3.cact</code> (63.4 MB, W4A8) invokes <code class="tag-chip">save_note</code> over C++ JNI to emit a headline, boolean category flags (<code class="tag-chip">#bug</code>, <code class="tag-chip">#ship</code>, <code class="tag-chip">#idea</code>, <code class="tag-chip">#people</code>, <code class="tag-chip">#study</code>), pending todos (<code class="tag-chip">#todo</code>), or <code class="tag-chip">#log</code> when uncategorized.
+            </p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="benchmarks" class="border-t border-[#2b59c3]">
+      <div class="mx-auto max-w-6xl space-y-10 px-5 py-20 sm:px-8">
+        <div class="space-y-3">
+          <p class="text-xs uppercase tracking-widest text-[#86efac]">Held-out evaluation</p>
+          <h2 class="font-pixel section-title m-0 text-[#ffffff]">
+            Measured on Svarah speech and 30 held-out notes
+          </h2>
+          <p class="prose-limit m-0 text-sm text-[#d4cef0]">
+            Benchmarks comparing Svarah-tuned <code class="tag-chip">whistle-svarah</code> and fine-tuned <code class="tag-chip">needle3-notes</code> against their base checkpoints.
+          </p>
+        </div>
+
+        <div class="space-y-4">
+          <h3 class="m-0 text-sm font-medium uppercase tracking-wider text-[#d4cef0]">
+            Speech transcription (Whistle Svarah WER, lower is better)
+          </h3>
+          <div tabindex="0" role="region" aria-labelledby="whistle-caption" class="table-wrapper">
+            <table class="bench-table bench-table--whistle">
+              <caption id="whistle-caption">Whistle base vs Svarah fine-tuned WER benchmark</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Benchmark</th>
+                  <th scope="col">Base Whistle</th>
+                  <th scope="col">Fine-tuned</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">100-clip runtime .cact (overall WER)</th>
+                  <td class="text-[#d4cef0]">19.21%</td>
+                  <td class="text-[#86efac]">14.71%</td>
+                </tr>
+                <tr>
+                  <th scope="row">100-clip runtime .cact (Tamil subset WER)</th>
+                  <td class="text-[#d4cef0]">20.69%</td>
+                  <td class="text-[#86efac]">16.75%</td>
+                </tr>
+                <tr>
+                  <th scope="row">1,047-clip Svarah held-out (greedy WER)</th>
+                  <td class="text-[#d4cef0]">20.58%</td>
+                  <td class="text-[#86efac]">17.2%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="space-y-4">
+          <h3 class="m-0 text-sm font-medium uppercase tracking-wider text-[#d4cef0]">
+            Task and tag extraction (Needle 3 on 30 frozen voice notes)
+          </h3>
+          <div tabindex="0" role="region" aria-labelledby="bench-caption" class="table-wrapper">
+            <table class="bench-table bench-table--needle">
+              <caption id="bench-caption">Needle 3 base vs fine-tuned benchmark on 30 held-out voice notes</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Metric</th>
+                  <th scope="col">Base Needle 3</th>
+                  <th scope="col">Fine-tuned</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Tool call rate</th>
+                  <td class="text-[#d4cef0]">93.3%</td>
+                  <td class="text-[#86efac]">100.0%</td>
+                </tr>
+                <tr>
+                  <th scope="row">Task exact match</th>
+                  <td class="text-[#d4cef0]">20.0%</td>
+                  <td class="text-[#86efac]">93.3%</td>
+                </tr>
+                <tr>
+                  <th scope="row">Task F1</th>
+                  <td class="text-[#d4cef0]">17.8%</td>
+                  <td class="text-[#86efac]">94.4%</td>
+                </tr>
+                <tr>
+                  <th scope="row">Tag exact match</th>
+                  <td class="text-[#d4cef0]">10.0%</td>
+                  <td class="text-[#86efac]">63.3%</td>
+                </tr>
+                <tr>
+                  <th scope="row">Tag F1</th>
+                  <td class="text-[#d4cef0]">32.6%</td>
+                  <td class="text-[#86efac]">78.7%</td>
+                </tr>
+                <tr>
+                  <th scope="row">Non-task false positives</th>
+                  <td class="text-[#d4cef0]">72.2%</td>
+                  <td class="text-[#86efac]">11.1%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="border-t border-[#2b59c3]">
+      <div class="mx-auto max-w-6xl space-y-10 px-5 py-20 sm:px-8">
+        <div class="space-y-3">
+          <p class="text-xs uppercase tracking-widest text-[#86efac]">Boundaries</p>
+          <h2 class="font-pixel section-title m-0 text-[#ffffff]">
+            Storage, privacy, and honest limits
+          </h2>
+        </div>
+
+        <div class="grid grid-cols-1 gap-8 md:grid-cols-2">
+          <div class="app-panel space-y-4">
+            <h3 class="m-0 text-base font-medium text-[#ffffff]">On-device storage</h3>
+            <ul class="m-0 space-y-3 pl-5 text-sm text-[#d4cef0]">
+              <li>Notes and <code class="tag-chip">.m4a</code> clips live in <code class="tag-chip">expo-sqlite</code> and local app storage with <code class="tag-chip">android:allowBackup="false"</code>.</li>
+              <li>Switch between Notes and Tasks views, filter by keyword, <code class="tag-chip">#tag</code>, or <code class="tag-chip">#open</code>, and review the 14-day cadence grid in Vault.</li>
+              <li>Export everything as JSON anytime through Android Storage Access Framework.</li>
+            </ul>
+          </div>
+
+          <div class="app-panel space-y-4">
+            <h3 class="m-0 text-base font-medium text-[#ffffff]">Known boundaries</h3>
+            <ul class="m-0 space-y-3 pl-5 text-sm text-[#d4cef0]">
+              <li>First-time model setup downloads roughly 93 MB from Hugging Face before offline extraction starts; notes recorded before download queue as raw transcripts.</li>
+              <li>Merging the local LoRA drops Needle 3's confidence head, so confidence reads <code class="tag-chip">null</code> and 11.1% false positives remain on non-task phrasing.</li>
+              <li>Targets 64-bit Android (<code class="tag-chip">arm64-v8a</code>). 32-bit <code class="tag-chip">armeabi-v7a</code> is not bundled in this APK; voice clips cap at 120 seconds.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-[#2b59c3]">
+    <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-8 text-xs text-[#d4cef0] sm:px-8">
+      <span>v1.2.0 &middot; Expo SDK 52 &middot; Cactus 4.1.4</span>
+      <a href="https://github.com/barryallen16/mono" class="btn-outline">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+        </svg>
+        <span>Star on GitHub</span>
+      </a>
+    </div>
+  </footer>
+</body>
+</html>
