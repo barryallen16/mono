@@ -4,11 +4,13 @@ import { FlatList, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { NoteCard, NotePatch } from '~/components/note-card';
+import { PixelIcon } from '~/components/pixel-icon';
 import {
   Button,
   EmptyState,
   ErrorBanner,
   Field,
+  Panel,
   ScreenHeader,
   Sheet,
   SkeletonNoteCard,
@@ -29,8 +31,18 @@ import { addRecentSearch, clearRecentSearches, getRecentSearches } from '~/utils
 
 const FILTERS = ['all', 'open', 'voice', ...ALLOWED_NOTE_TAGS] as const;
 type NoteFilter = (typeof FILTERS)[number];
+type NotesViewMode = 'notes' | 'tasks';
+
+interface TaskRowItem {
+  key: string;
+  noteId: number;
+  noteTitle: string;
+  localDate: string;
+  action: MonoNote['actionItems'][number];
+}
 
 export default function NotesScreen() {
+  const [viewMode, setViewMode] = useState<NotesViewMode>('notes');
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<NoteFilter>('all');
@@ -110,6 +122,28 @@ export default function NotesScreen() {
     if (activeFilter === 'all') return notes;
     return notes.filter((note) => note.tags.includes(activeFilter));
   }, [notes, activeFilter]);
+
+  const taskRows = useMemo<TaskRowItem[]>(() => {
+    const items: TaskRowItem[] = [];
+    for (const note of visibleNotes) {
+      for (const action of note.actionItems) {
+        if (activeFilter === 'open' && action.done) continue;
+        items.push({
+          key: `${note.id}:${action.id}`,
+          noteId: note.id,
+          noteTitle: note.title,
+          localDate: note.localDate,
+          action,
+        });
+      }
+    }
+    return items.sort((a, b) => Number(a.action.done) - Number(b.action.done));
+  }, [visibleNotes, activeFilter]);
+
+  const openTaskCount = useMemo(
+    () => taskRows.reduce((count, row) => count + (row.action.done ? 0 : 1), 0),
+    [taskRows]
+  );
 
   const handleToggleAction = async (noteId: number, actionId: string) => {
     try {
@@ -201,19 +235,61 @@ export default function NotesScreen() {
   return (
     <SafeAreaView className="flex-1 bg-bg">
       <ScreenHeader
-        title="Notes"
-        subtitle="Search and manage saved notes"
+        title={viewMode === 'tasks' ? 'Tasks' : 'Notes'}
+        subtitle={
+          viewMode === 'tasks'
+            ? 'Checkable todos extracted from your notes'
+            : 'Search and manage saved notes'
+        }
         right={
           <Text className="font-mono text-xs text-muted" style={tabularNums}>
-            {visibleNotes.length} {visibleNotes.length === 1 ? 'note' : 'notes'}
+            {viewMode === 'tasks'
+              ? `${openTaskCount} open`
+              : `${visibleNotes.length} ${visibleNotes.length === 1 ? 'note' : 'notes'}`}
           </Text>
         }
       />
 
       <View className="border-b border-line bg-bg px-4 py-3">
         <View className="w-full max-w-2xl gap-3 self-center">
+          <View className="flex-row gap-2">
+            {(
+              [
+                { mode: 'notes', label: 'Notes', icon: 'notes' },
+                {
+                  mode: 'tasks',
+                  label: openTaskCount > 0 ? `Tasks (${openTaskCount})` : 'Tasks',
+                  icon: 'checkbox-on',
+                },
+              ] as const
+            ).map((tab) => {
+              const active = viewMode === tab.mode;
+              return (
+                <Tappable
+                  key={tab.mode}
+                  onPress={() => setViewMode(tab.mode)}
+                  className={`min-h-10 flex-1 flex-row items-center justify-center gap-1.5 rounded-md border px-3 ${
+                    active ? 'border-accent bg-accent' : 'border-line bg-panel'
+                  }`}>
+                  <PixelIcon name={tab.icon} size={16} color={active ? '#07256c' : '#d4cef0'} />
+                  <Text
+                    className={`font-mono-semibold text-xs ${
+                      active ? 'text-on-accent' : 'text-ink'
+                    }`}
+                    style={tabularNums}>
+                    {tab.label}
+                  </Text>
+                </Tappable>
+              );
+            })}
+          </View>
+
           <Field
-            placeholder="Search transcripts, titles, #tags..."
+            placeholder={
+              viewMode === 'tasks'
+                ? 'Filter tasks or note titles...'
+                : 'Search transcripts, titles, #tags...'
+            }
             value={query}
             onChangeText={setQuery}
             onSubmitEditing={handleSearchSubmit}
@@ -268,61 +344,138 @@ export default function NotesScreen() {
         </View>
       </View>
 
-      <FlatList
-        data={visibleNotes}
-        keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-        keyboardDismissMode="on-drag"
-        keyboardShouldPersistTaps="handled"
-        refreshing={isRefreshing}
-        onRefresh={() => load(debouncedQueryRef.current, activeFilterRef.current, true)}
-        ListHeaderComponent={
-          error ? (
-            <View className="mb-3 w-full max-w-2xl self-center">
-              <ErrorBanner onRetry={() => load(debouncedQueryRef.current, activeFilterRef.current)}>
-                {error}
-              </ErrorBanner>
-            </View>
-          ) : null
-        }
-        ItemSeparatorComponent={() => <View className="h-3" />}
-        renderItem={({ item }) => (
-          <View className="w-full max-w-2xl self-center">
-            <NoteCard
-              note={item}
-              onToggleAction={handleToggleAction}
-              onUpdate={handleUpdate}
-              onDelete={setConfirmDelete}
-              onRetry={handleRetry}
-              onAudioError={setError}
-            />
-          </View>
-        )}
-        ListEmptyComponent={
-          isLoading ? (
-            <View className="w-full max-w-2xl gap-3 self-center">
-              <SkeletonNoteCard />
-              <SkeletonNoteCard />
-            </View>
-          ) : (
+      {viewMode === 'tasks' ? (
+        <FlatList
+          data={taskRows}
+          keyExtractor={(item) => item.key}
+          contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          refreshing={isRefreshing}
+          onRefresh={() => load(debouncedQueryRef.current, activeFilterRef.current, true)}
+          ListHeaderComponent={
+            error ? (
+              <View className="mb-3 w-full max-w-2xl self-center">
+                <ErrorBanner
+                  onRetry={() => load(debouncedQueryRef.current, activeFilterRef.current)}>
+                  {error}
+                </ErrorBanner>
+              </View>
+            ) : null
+          }
+          ItemSeparatorComponent={() => <View className="h-2.5" />}
+          renderItem={({ item }) => (
             <View className="w-full max-w-2xl self-center">
-              <EmptyState
-                icon="search"
-                title="No matching notes"
-                description={
-                  query
-                    ? `Nothing matched "${query}". Try a different keyword or clear your search.`
-                    : 'Try another keyword or switch back to all notes.'
-                }
-                actionLabel={query ? 'Clear search' : undefined}
-                actionIcon={query ? 'close' : undefined}
-                actionVariant="secondary"
-                onAction={query ? () => setQuery('') : undefined}
+              <Panel className="p-0">
+                <Tappable
+                  onPress={() => handleToggleAction(item.noteId, item.action.id)}
+                  accessibilityLabel={`${item.action.done ? 'Mark incomplete' : 'Complete'} ${item.action.text}`}
+                  className="min-h-12 flex-row items-start gap-3 px-4 py-3">
+                  <View className="mt-0.5">
+                    <PixelIcon
+                      name={item.action.done ? 'checkbox-on' : 'checkbox'}
+                      size={16}
+                      color={item.action.done ? '#9d91cc' : '#d4cef0'}
+                    />
+                  </View>
+                  <View className="flex-1 gap-1">
+                    <Text
+                      className={`font-mono text-sm leading-5 ${
+                        item.action.done ? 'text-muted line-through' : 'text-ink'
+                      }`}>
+                      {item.action.text}
+                    </Text>
+                    <Text className="font-mono text-xs text-muted" style={tabularNums}>
+                      {item.noteTitle} - {item.localDate}
+                    </Text>
+                  </View>
+                </Tappable>
+              </Panel>
+            </View>
+          )}
+          ListEmptyComponent={
+            isLoading ? (
+              <View className="w-full max-w-2xl gap-3 self-center">
+                <SkeletonNoteCard />
+                <SkeletonNoteCard />
+              </View>
+            ) : (
+              <View className="w-full max-w-2xl self-center">
+                <EmptyState
+                  icon="check"
+                  title={activeFilter === 'open' ? 'No open tasks' : 'No matching tasks'}
+                  description={
+                    query
+                      ? `No tasks matched "${query}". Try a different keyword or clear your search.`
+                      : 'Record or type a note with a todo to see it listed here.'
+                  }
+                  actionLabel={query ? 'Clear search' : undefined}
+                  actionIcon={query ? 'close' : undefined}
+                  actionVariant="secondary"
+                  onAction={query ? () => setQuery('') : undefined}
+                />
+              </View>
+            )
+          }
+        />
+      ) : (
+        <FlatList
+          data={visibleNotes}
+          keyExtractor={(item) => String(item.id)}
+          contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          refreshing={isRefreshing}
+          onRefresh={() => load(debouncedQueryRef.current, activeFilterRef.current, true)}
+          ListHeaderComponent={
+            error ? (
+              <View className="mb-3 w-full max-w-2xl self-center">
+                <ErrorBanner
+                  onRetry={() => load(debouncedQueryRef.current, activeFilterRef.current)}>
+                  {error}
+                </ErrorBanner>
+              </View>
+            ) : null
+          }
+          ItemSeparatorComponent={() => <View className="h-3" />}
+          renderItem={({ item }) => (
+            <View className="w-full max-w-2xl self-center">
+              <NoteCard
+                note={item}
+                onToggleAction={handleToggleAction}
+                onUpdate={handleUpdate}
+                onDelete={setConfirmDelete}
+                onRetry={handleRetry}
+                onAudioError={setError}
               />
             </View>
-          )
-        }
-      />
+          )}
+          ListEmptyComponent={
+            isLoading ? (
+              <View className="w-full max-w-2xl gap-3 self-center">
+                <SkeletonNoteCard />
+                <SkeletonNoteCard />
+              </View>
+            ) : (
+              <View className="w-full max-w-2xl self-center">
+                <EmptyState
+                  icon="search"
+                  title="No matching notes"
+                  description={
+                    query
+                      ? `Nothing matched "${query}". Try a different keyword or clear your search.`
+                      : 'Try another keyword or switch back to all notes.'
+                  }
+                  actionLabel={query ? 'Clear search' : undefined}
+                  actionIcon={query ? 'close' : undefined}
+                  actionVariant="secondary"
+                  onAction={query ? () => setQuery('') : undefined}
+                />
+              </View>
+            )
+          }
+        />
+      )}
 
       <Sheet
         visible={confirmDelete !== null}
