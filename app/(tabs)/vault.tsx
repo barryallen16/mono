@@ -339,7 +339,7 @@ export default function VaultScreen() {
                     label={
                       cactusStatus.whistleCached && cactusStatus.needleCached
                         ? 'Warm up on-device models'
-                        : 'Download Whistle + Needle 3 (~64 MB)'
+                        : 'Download Whistle + Needle 3 (~93 MB)'
                     }
                     icon="zap"
                     variant="secondary"
@@ -443,7 +443,7 @@ export default function VaultScreen() {
           </Panel>
 
           <Text className="text-center font-mono text-xs text-muted" style={tabularNums}>
-            mono v{Constants.expoConfig?.version ?? '1.0.1'}
+            mono v{Constants.expoConfig?.version ?? '1.2.0'}
           </Text>
         </View>
       </ScrollView>
