@@ -4,7 +4,7 @@ import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PixelIcon, PixelIconName } from '~/components/pixel-icon';
-import { Brand, Button, Panel } from '~/components/ui';
+import { Brand, Button, Panel, Tappable } from '~/components/ui';
 import { prepareCactusModels } from '~/utils/cactus';
 import { markOnboardingSeen } from '~/utils/onboarding';
 
@@ -51,6 +51,15 @@ export default function Onboarding() {
     }
   };
 
+  const handleSkip = async () => {
+    await markOnboardingSeen();
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)');
+    }
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-bg">
       <ScrollView contentContainerStyle={{ padding: 20, flexGrow: 1, justifyContent: 'center' }}>
@@ -76,12 +85,20 @@ export default function Onboarding() {
             />
           </Panel>
 
-          <Button
-            label="Start recording"
-            icon="arrow-right"
-            onPress={handleStart}
-            loading={isStarting}
-          />
+          <View className="gap-2">
+            <Button
+              label="Start recording"
+              icon="arrow-right"
+              onPress={handleStart}
+              loading={isStarting}
+            />
+            <Tappable
+              onPress={handleSkip}
+              accessibilityLabel="Skip onboarding"
+              className="min-h-10 items-center justify-center">
+              <Text className="font-mono text-sm text-muted">Skip for now</Text>
+            </Tappable>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>

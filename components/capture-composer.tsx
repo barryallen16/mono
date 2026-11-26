@@ -210,7 +210,7 @@ export function CaptureComposer({
             <PixelIcon name="lock" size={16} color={willLock ? '#041236' : '#9d91cc'} />
             <Text
               className={`font-mono-medium text-[11px] ${
-                willLock ? 'text-[#041236]' : 'text-muted'
+                willLock ? 'text-on-accent' : 'text-muted'
               }`}>
               {willLock ? 'Lock!' : 'Lock'}
             </Text>
@@ -239,7 +239,7 @@ export function CaptureComposer({
                 />
               </View>
               <Text
-                className={`font-mono text-xs ${willCancel ? 'text-red-300' : 'text-muted'}`}
+                className={`font-mono text-xs ${willCancel ? 'text-danger-ink' : 'text-muted'}`}
                 numberOfLines={1}>
                 {willCancel ? 'Release!' : '< Cancel'}
               </Text>
@@ -267,7 +267,7 @@ export function CaptureComposer({
                 isSaving || isBusy ? 'opacity-40' : ''
               }`}>
               <PixelIcon name="check" size={16} color="#041236" />
-              <Text className="font-pixel text-sm tracking-wider text-[#041236]">
+              <Text className="font-pixel text-sm tracking-wider text-on-accent">
                 {isSaving ? '...' : 'Save'}
               </Text>
             </Tappable>

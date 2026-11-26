@@ -7,21 +7,22 @@ import {
 } from 'expo-audio';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Keyboard,
-  KeyboardAvoidingView,
-  Linking,
-  ScrollView,
-  Text,
-  Vibration,
-  View,
-} from 'react-native';
+import { Keyboard, KeyboardAvoidingView, Linking, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CaptureComposer, RecordingMode } from '~/components/capture-composer';
 import { NoteCard, NotePatch } from '~/components/note-card';
 import { MonoLogo, PixelIcon } from '~/components/pixel-icon';
-import { Button, ErrorBanner, Panel, ScreenHeader, Sheet, tabularNums } from '~/components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorBanner,
+  Panel,
+  ScreenHeader,
+  Sheet,
+  SkeletonNoteCard,
+  tabularNums,
+} from '~/components/ui';
 import { discardTempAudioClip, stopActivePlayback } from '~/utils/audio';
 import { getCactusStatus, prepareCactusModels, subscribeCactusProgress } from '~/utils/cactus';
 import {
@@ -35,7 +36,7 @@ import {
   updateNote,
 } from '~/utils/db';
 import { formatDuration } from '~/utils/notes';
-import { hasSeenOnboarding } from '~/utils/onboarding';
+import { hasSeenOnboarding, triggerHaptic } from '~/utils/onboarding';
 
 const MAX_RECORDING_SECONDS = 120;
 
@@ -76,6 +77,7 @@ export default function CaptureScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [latestNote, setLatestNote] = useState<MonoNote | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [streak, setStreak] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<MonoNote | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -116,6 +118,8 @@ export default function CaptureScreen() {
       setStreak(computeStreak(notes));
     } catch {
       if (mountedRef.current) setError('Could not read local database.');
+    } finally {
+      if (mountedRef.current) setIsInitialLoading(false);
     }
   }, []);
 
@@ -456,7 +460,7 @@ export default function CaptureScreen() {
 
   const handleHoldStart = () => {
     if (busyRef.current || recordingActiveRef.current || isSaving) return;
-    Vibration.vibrate(10);
+    triggerHaptic(10);
     wantRecordingRef.current = true;
     recordingModeRef.current = 'holding';
     setRecordingMode('holding');
@@ -465,13 +469,13 @@ export default function CaptureScreen() {
 
   const handleHoldLock = () => {
     if (!wantRecordingRef.current && !recordingActiveRef.current) return;
-    Vibration.vibrate(15);
+    triggerHaptic(15);
     recordingModeRef.current = 'locked';
     setRecordingMode('locked');
   };
 
   const handleHoldCancel = () => {
-    Vibration.vibrate(15);
+    triggerHaptic(15);
     cancelRecording();
   };
 
@@ -625,7 +629,12 @@ export default function CaptureScreen() {
 
             {error ? (
               <View className="gap-2">
-                <ErrorBanner>{error}</ErrorBanner>
+                <ErrorBanner
+                  onRetry={
+                    error.includes('Could not read local database') ? refreshLatest : undefined
+                  }>
+                  {error}
+                </ErrorBanner>
                 {error.includes('Microphone permission') ? (
                   <Button
                     label="Open app settings"
@@ -637,7 +646,9 @@ export default function CaptureScreen() {
               </View>
             ) : null}
 
-            {latestNote ? (
+            {isInitialLoading && !latestNote ? (
+              <SkeletonNoteCard />
+            ) : latestNote ? (
               <NoteCard
                 key={latestNote.id}
                 note={latestNote}
@@ -648,13 +659,11 @@ export default function CaptureScreen() {
                 onAudioError={setError}
               />
             ) : (
-              <Panel className="items-start gap-2">
-                <Text className="font-pixel text-base text-ink">No entries yet</Text>
-                <Text className="font-mono text-xs leading-5 text-muted">
-                  Hold the mic button below to record (swipe up to lock), or type a note. Your phone
-                  transcribes speech and pulls out tasks offline.
-                </Text>
-              </Panel>
+              <EmptyState
+                icon="mic"
+                title="No entries yet"
+                description="Hold the mic button below to record (swipe up to lock), or type a note. Your phone transcribes speech and pulls out tasks offline."
+              />
             )}
           </View>
         </ScrollView>

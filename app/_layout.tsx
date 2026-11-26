@@ -1,19 +1,19 @@
 import '../global.css';
 import { useFonts } from 'expo-font';
-import { Stack, usePathname, useRouter } from 'expo-router';
+import { Stack, usePathname, useRootNavigationState, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { MonoLogo } from '~/components/pixel-icon';
-import { hasSeenOnboarding } from '~/utils/onboarding';
+import { hasSeenOnboarding, subscribeOnboardingChanged } from '~/utils/onboarding';
 
 function BootSplash({ overlay = false }: { overlay?: boolean }) {
   return (
     <View
       style={overlay ? StyleSheet.absoluteFill : undefined}
       className="flex-1 items-center justify-center bg-bg">
-      <MonoLogo height={42} color="#ffffff" />
+      <MonoLogo height={66} color="#ffffff" />
     </View>
   );
 }
@@ -21,6 +21,7 @@ function BootSplash({ overlay = false }: { overlay?: boolean }) {
 export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
+  const navigationState = useRootNavigationState();
   const [onboardingSeen, setOnboardingSeen] = useState<boolean | null>(null);
   const [bootOverlayDismissed, setBootOverlayDismissed] = useState(false);
 
@@ -33,20 +34,24 @@ export default function RootLayout() {
 
   useEffect(() => {
     let active = true;
+    const unsubscribe = subscribeOnboardingChanged((seen) => {
+      if (active) setOnboardingSeen(seen);
+    });
     hasSeenOnboarding()
       .then((seen) => {
         if (active) setOnboardingSeen(seen);
       })
       .catch(() => {
-        if (active) setOnboardingSeen(true);
+        if (active) setOnboardingSeen(false);
       });
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 
   useEffect(() => {
-    if (!fontsLoaded || onboardingSeen === null) return;
+    if (!fontsLoaded || onboardingSeen === null || !navigationState?.key) return;
     if (onboardingSeen || pathname === '/onboarding') {
       setBootOverlayDismissed(true);
       return;
@@ -54,7 +59,7 @@ export default function RootLayout() {
     if (!bootOverlayDismissed) {
       router.replace('/onboarding');
     }
-  }, [fontsLoaded, onboardingSeen, pathname, bootOverlayDismissed, router]);
+  }, [fontsLoaded, onboardingSeen, navigationState?.key, pathname, bootOverlayDismissed, router]);
 
   if (!fontsLoaded || onboardingSeen === null) {
     return <BootSplash />;

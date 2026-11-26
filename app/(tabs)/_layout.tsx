@@ -1,8 +1,9 @@
 import { Tabs } from 'expo-router';
-import { StyleSheet, Vibration } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PixelIcon } from '~/components/pixel-icon';
+import { triggerHaptic } from '~/utils/onboarding';
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
@@ -12,7 +13,7 @@ export default function TabLayout() {
     <Tabs
       screenListeners={{
         tabPress: () => {
-          Vibration.vibrate(10);
+          triggerHaptic(10);
         },
       }}
       screenOptions={{
@@ -21,7 +22,7 @@ export default function TabLayout() {
         tabBarInactiveTintColor: '#8fa4d8',
         tabBarStyle: {
           backgroundColor: '#09318d',
-          borderTopColor: '#1f4ab2',
+          borderTopColor: '#5b82e0',
           borderTopWidth: StyleSheet.hairlineWidth,
           height: 58 + bottomPadding,
           paddingBottom: bottomPadding,

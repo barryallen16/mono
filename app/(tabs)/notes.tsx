@@ -4,14 +4,14 @@ import { FlatList, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { NoteCard, NotePatch } from '~/components/note-card';
-import { PixelIcon } from '~/components/pixel-icon';
 import {
   Button,
+  EmptyState,
   ErrorBanner,
   Field,
-  Panel,
   ScreenHeader,
   Sheet,
+  SkeletonNoteCard,
   Tappable,
   tabularNums,
 } from '~/components/ui';
@@ -25,6 +25,7 @@ import {
   updateNote,
 } from '~/utils/db';
 import { ALLOWED_NOTE_TAGS } from '~/utils/notes';
+import { addRecentSearch, clearRecentSearches, getRecentSearches } from '~/utils/onboarding';
 
 const FILTERS = ['all', 'open', 'voice', ...ALLOWED_NOTE_TAGS] as const;
 type NoteFilter = (typeof FILTERS)[number];
@@ -34,9 +35,12 @@ export default function NotesScreen() {
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<NoteFilter>('all');
   const [notes, setNotes] = useState<MonoNote[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<MonoNote | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
 
   const debouncedQueryRef = useRef(debouncedQuery);
   const activeFilterRef = useRef(activeFilter);
@@ -54,8 +58,9 @@ export default function NotesScreen() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  const load = useCallback(async (searchText: string, filter: NoteFilter) => {
+  const load = useCallback(async (searchText: string, filter: NoteFilter, isRefresh = false) => {
     const reqId = ++requestIdRef.current;
+    if (isRefresh) setIsRefreshing(true);
     try {
       const dbTag = filter === 'open' ? 'all' : filter;
       const items = await searchNotes(searchText, dbTag);
@@ -65,6 +70,11 @@ export default function NotesScreen() {
     } catch {
       if (!mountedRef.current || requestIdRef.current !== reqId) return;
       setError('Could not load local notes.');
+    } finally {
+      if (mountedRef.current && requestIdRef.current === reqId) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, []);
 
@@ -79,6 +89,9 @@ export default function NotesScreen() {
     useCallback(() => {
       hasFocusedRef.current = true;
       load(debouncedQueryRef.current, activeFilterRef.current);
+      getRecentSearches()
+        .then(setRecentSearches)
+        .catch(() => {});
       return () => {
         stopActivePlayback();
       };
@@ -163,6 +176,28 @@ export default function NotesScreen() {
     }
   };
 
+  const handleSearchSubmit = () => {
+    const trimmed = query.trim();
+    if (trimmed) {
+      addRecentSearch(trimmed)
+        .then(setRecentSearches)
+        .catch(() => {});
+    }
+  };
+
+  const applyRecentSearch = (term: string) => {
+    setQuery(term);
+    setDebouncedQuery(term);
+  };
+
+  const handleClearRecents = () => {
+    clearRecentSearches()
+      .then(() => setRecentSearches([]))
+      .catch(() => {});
+  };
+
+  const showRecents = !query && recentSearches.length > 0;
+
   return (
     <SafeAreaView className="flex-1 bg-bg">
       <ScreenHeader
@@ -177,26 +212,37 @@ export default function NotesScreen() {
 
       <View className="border-b border-line bg-bg px-4 py-3">
         <View className="w-full max-w-2xl gap-3 self-center">
-          <View className="flex-row items-center gap-2">
-            <View className="flex-1">
-              <Field
-                placeholder="Search transcripts, titles, #tags..."
-                value={query}
-                onChangeText={setQuery}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="search"
-              />
-            </View>
-            {query ? (
+          <Field
+            placeholder="Search transcripts, titles, #tags..."
+            value={query}
+            onChangeText={setQuery}
+            onSubmitEditing={handleSearchSubmit}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            leftIcon="search"
+            onClear={query ? () => setQuery('') : undefined}
+          />
+
+          {showRecents ? (
+            <View className="flex-row flex-wrap items-center gap-2">
+              <Text className="font-mono text-xs text-muted">Recent:</Text>
+              {recentSearches.map((term) => (
+                <Tappable
+                  key={term}
+                  onPress={() => applyRecentSearch(term)}
+                  className="min-h-8 items-center justify-center rounded-sm border border-line-subtle bg-bg px-2.5">
+                  <Text className="font-mono text-xs text-muted">{term}</Text>
+                </Tappable>
+              ))}
               <Tappable
-                onPress={() => setQuery('')}
-                accessibilityLabel="Clear search"
-                className="h-12 w-12 items-center justify-center rounded-md border border-line bg-panel">
-                <PixelIcon name="close" size={16} color="#d4cef0" />
+                onPress={handleClearRecents}
+                accessibilityLabel="Clear recent searches"
+                className="min-h-8 items-center justify-center px-1">
+                <Text className="font-mono text-xs text-accent">Clear</Text>
               </Tappable>
-            ) : null}
-          </View>
+            </View>
+          ) : null}
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View className="flex-row gap-2">
@@ -211,7 +257,7 @@ export default function NotesScreen() {
                       active ? 'border-accent bg-accent' : 'border-line bg-panel'
                     }`}>
                     <Text
-                      className={`font-mono-medium text-xs ${active ? 'text-bg' : 'text-muted'}`}>
+                      className={`font-mono-medium text-xs ${active ? 'text-on-accent' : 'text-muted'}`}>
                       {label}
                     </Text>
                   </Tappable>
@@ -228,10 +274,14 @@ export default function NotesScreen() {
         contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
+        refreshing={isRefreshing}
+        onRefresh={() => load(debouncedQueryRef.current, activeFilterRef.current, true)}
         ListHeaderComponent={
           error ? (
             <View className="mb-3 w-full max-w-2xl self-center">
-              <ErrorBanner>{error}</ErrorBanner>
+              <ErrorBanner onRetry={() => load(debouncedQueryRef.current, activeFilterRef.current)}>
+                {error}
+              </ErrorBanner>
             </View>
           ) : null
         }
@@ -249,15 +299,28 @@ export default function NotesScreen() {
           </View>
         )}
         ListEmptyComponent={
-          <View className="w-full max-w-2xl self-center">
-            <Panel className="items-start gap-2">
-              <PixelIcon name="search" size={24} color="#9d91cc" />
-              <Text className="mt-1 font-pixel text-base text-ink">No matching notes</Text>
-              <Text className="font-mono text-xs leading-5 text-muted">
-                Try another keyword or switch back to all notes.
-              </Text>
-            </Panel>
-          </View>
+          isLoading ? (
+            <View className="w-full max-w-2xl gap-3 self-center">
+              <SkeletonNoteCard />
+              <SkeletonNoteCard />
+            </View>
+          ) : (
+            <View className="w-full max-w-2xl self-center">
+              <EmptyState
+                icon="search"
+                title="No matching notes"
+                description={
+                  query
+                    ? `Nothing matched "${query}". Try a different keyword or clear your search.`
+                    : 'Try another keyword or switch back to all notes.'
+                }
+                actionLabel={query ? 'Clear search' : undefined}
+                actionIcon={query ? 'close' : undefined}
+                actionVariant="secondary"
+                onAction={query ? () => setQuery('') : undefined}
+              />
+            </View>
+          )
         }
       />
 

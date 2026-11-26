@@ -1,5 +1,5 @@
 /* eslint-env node */
-const { withDangerousMod } = require('expo/config-plugins');
+const { withAndroidManifest, withDangerousMod } = require('expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
 
@@ -190,7 +190,16 @@ function applyExpoAudioPatches(projectRoot) {
 }
 
 module.exports = function withExpoAudioFix(config) {
-  return withDangerousMod(config, [
+  const withNoBackup = withAndroidManifest(config, (modConfig) => {
+    const app = modConfig.modResults.manifest?.application?.[0];
+    if (app) {
+      app.$ = app.$ || {};
+      app.$['android:allowBackup'] = 'false';
+    }
+    return modConfig;
+  });
+
+  return withDangerousMod(withNoBackup, [
     'android',
     (modConfig) => {
       applyExpoAudioPatches(modConfig.modRequest.projectRoot);

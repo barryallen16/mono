@@ -12,6 +12,7 @@ import {
   Panel,
   ScreenHeader,
   Sheet,
+  ToastBanner,
   tabularNums,
 } from '~/components/ui';
 import { exportNotesToFile } from '~/utils/audio';
@@ -224,7 +225,7 @@ export default function VaultScreen() {
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
         <View className="w-full max-w-2xl gap-4 self-center">
-          {error ? <ErrorBanner>{error}</ErrorBanner> : null}
+          {error ? <ErrorBanner onRetry={load}>{error}</ErrorBanner> : null}
 
           <Panel className="gap-3">
             <View className="flex-row items-center justify-between">
@@ -327,9 +328,11 @@ export default function VaultScreen() {
                   </View>
                 ) : null}
                 {cacheNotice ? (
-                  <View className="rounded-md border border-line bg-bg px-3 py-2">
-                    <Text className="font-mono text-xs text-muted">{cacheNotice}</Text>
-                  </View>
+                  <ToastBanner
+                    message={cacheNotice}
+                    tone="info"
+                    onDismiss={() => setCacheNotice(null)}
+                  />
                 ) : null}
                 <View className="mt-1 gap-2">
                   <Button
@@ -354,10 +357,9 @@ export default function VaultScreen() {
                   ) : null}
                 </View>
                 <View className="mt-2 gap-2 border-t border-line pt-2.5">
-                  <Text className="font-mono text-xs text-muted">
-                    Speech keywords (comma or newline separated)
-                  </Text>
                   <Field
+                    label="Speech keywords"
+                    hint="Comma or newline separated. Helps the speech model recognize names and terms."
                     placeholder="Chennai, Cactus, SQLite"
                     value={keywordsText}
                     onChangeText={(next) => {
@@ -369,7 +371,11 @@ export default function VaultScreen() {
                     autoCorrect={false}
                   />
                   {keywordsNotice ? (
-                    <Text className="font-mono text-xs text-accent">{keywordsNotice}</Text>
+                    <ToastBanner
+                      message={keywordsNotice}
+                      tone="success"
+                      onDismiss={() => setKeywordsNotice(null)}
+                    />
                   ) : null}
                   <Button
                     label="Save keywords"
@@ -385,9 +391,11 @@ export default function VaultScreen() {
           <Panel className="gap-2.5">
             <Text className="font-pixel text-base text-ink">Data</Text>
             {exportNotice ? (
-              <View className="rounded-md border border-line bg-bg px-3 py-2">
-                <Text className="font-mono text-xs text-accent">{exportNotice}</Text>
-              </View>
+              <ToastBanner
+                message={exportNotice}
+                tone="success"
+                onDismiss={() => setExportNotice(null)}
+              />
             ) : null}
             <Button
               label="Export JSON"
@@ -423,8 +431,8 @@ export default function VaultScreen() {
             />
           </Panel>
 
-          <Panel className="gap-2.5 border-danger/30">
-            <Text className="font-pixel text-base text-red-300">Danger zone</Text>
+          <Panel className="gap-2.5 border-danger-line">
+            <Text className="font-pixel text-base text-danger-ink">Danger zone</Text>
             <Button
               label="Wipe all notes"
               icon="trash"

@@ -54,6 +54,15 @@ const PIXEL_PATHS = {
   refresh: [
     'M6 4h10v2H6zM4 6h2v4H4zM14 2h2v2h-2zM16 4h2v2h-2zM14 6h2v2h-2zM8 18h10v2H8zM18 14h2v4h-2zM8 16h2v2H8zM6 18h2v2H6zM8 20h2v2H8z',
   ],
+  'chevron-up': [
+    'M13 8h-2v2h2V8Zm-2 2H9v2h2v-2Zm4 0h-2v2h2v-2Zm-6 2H7v2h2v-2Zm8 0h-2v2h2v-2ZM7 14H5v2h2v-2Zm12 0h-2v2h2v-2Z',
+  ],
+  'chevron-right': [
+    'M16 13v-2h-2v2h2Zm-2-2V9h-2v2h2Zm0 4v-2h-2v2h2Zm-2-6V7h-2v2h2Zm0 8v-2h-2v2h2ZM10 7V5H8v2h2Zm0 12v-2H8v2h2Z',
+  ],
+  'volume-2': [
+    'M13 22h-2v-2H9v-2h2V6H9V4h2V2h2v20Zm-4-4H7v-2h2v2Zm10 0h-4v-2h4v2ZM7 10H5v4h2v2H3V8h4v2Zm14 6h-2V8h2v8Zm-4-2h-2v-4h2v4ZM9 8H7V6h2v2Zm10 0h-4V6h4v2Z',
+  ],
 } as const;
 
 export type PixelIconName = keyof typeof PIXEL_PATHS;

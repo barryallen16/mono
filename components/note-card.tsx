@@ -233,7 +233,7 @@ export function NoteCard({
           <Tappable
             onPress={isEditing ? cancelEditing : startEditing}
             accessibilityLabel={isEditing ? 'Cancel edit' : `Edit ${note.title}`}
-            className="h-9 w-9 items-center justify-center rounded-md border border-line bg-bg">
+            className="h-12 w-12 items-center justify-center rounded-md border border-line bg-bg">
             <PixelIcon name={isEditing ? 'close' : 'edit'} size={16} color="#d4cef0" />
           </Tappable>
         ) : null}
@@ -241,7 +241,7 @@ export function NoteCard({
           <Tappable
             onPress={() => onDelete(note)}
             accessibilityLabel={`Delete ${note.title}`}
-            className="h-9 w-9 items-center justify-center rounded-md border border-line bg-bg">
+            className="h-12 w-12 items-center justify-center rounded-md border border-line bg-bg">
             <PixelIcon name="trash" size={16} color="#fca5a5" />
           </Tappable>
         ) : null}
@@ -315,7 +315,9 @@ export function NoteCard({
             ))}
           </View>
 
-          {editError ? <Text className="font-mono text-xs text-red-200">{editError}</Text> : null}
+          {editError ? (
+            <Text className="font-mono text-xs text-danger-ink">{editError}</Text>
+          ) : null}
 
           <View className="flex-row gap-2 pt-1">
             <View className="flex-1">
@@ -349,26 +351,28 @@ export function NoteCard({
               ) : null}
             </View>
           ) : note.audioState === 'failed' ? (
-            <View className="flex-row items-center justify-between gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2">
-              <Text className="flex-1 font-mono text-xs text-red-200">
+            <View className="flex-row items-center justify-between gap-2 rounded-md border border-danger-line bg-danger-surface px-3 py-2">
+              <Text className="flex-1 font-mono text-xs text-danger-ink">
                 {note.lastError || 'Transcription failed.'}
               </Text>
               {onRetry ? (
                 <Tappable
                   onPress={() => onRetry(note.id)}
-                  className="flex-row items-center gap-1 rounded-sm border border-danger/40 bg-bg px-2.5 py-1">
+                  className="min-h-10 flex-row items-center gap-1 rounded-sm border border-danger-line bg-bg px-2.5">
                   <PixelIcon name="refresh" size={16} color="#fca5a5" />
-                  <Text className="font-mono-medium text-xs text-red-200">Retry</Text>
+                  <Text className="font-mono-medium text-xs text-danger-ink">Retry</Text>
                 </Tappable>
               ) : null}
             </View>
           ) : note.extractEngine === 'none' && note.transcript.trim() ? (
             <View className="flex-row items-center justify-between gap-2">
-              <Text className="font-mono text-xs text-muted">Not extracted</Text>
+              <Text className="flex-1 font-mono text-xs text-muted">
+                {note.lastError || 'Not extracted'}
+              </Text>
               {onRetry ? (
                 <Tappable
                   onPress={() => onRetry(note.id)}
-                  className="flex-row items-center gap-1 rounded-sm border border-line bg-bg px-2 py-0.5">
+                  className="min-h-10 flex-row items-center gap-1 rounded-sm border border-line bg-bg px-2.5">
                   <PixelIcon name="refresh" size={16} color="#9d91cc" />
                   <Text className="font-mono-medium text-xs text-muted">Retry</Text>
                 </Tappable>
@@ -409,7 +413,9 @@ export function NoteCard({
 
           <View className="flex-row flex-wrap gap-2">
             {note.tags.map((tag) => (
-              <View key={tag} className="rounded-sm border border-line bg-bg px-2 py-0.5">
+              <View
+                key={tag}
+                className="min-h-8 items-center justify-center rounded-sm border border-line bg-bg px-2.5">
                 <Text className="font-mono text-xs text-muted">#{tag}</Text>
               </View>
             ))}
