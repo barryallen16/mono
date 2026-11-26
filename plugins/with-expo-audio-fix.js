@@ -137,6 +137,22 @@ function patchAudioRecorderKt(source) {
     'AudioRecorder.getAudioRecorderStatus'
   );
 
+  // 3. Use VOICE_RECOGNITION audio source for speech clarity on Android.
+  next = replaceOnce(
+    next,
+    `setAudioSource(MediaRecorder.AudioSource.MIC)`,
+    `setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)`,
+    'AudioRecorder.audioSource'
+  );
+
+  // 4. Fix metering dB scale (20 * log10 instead of 20 * ln).
+  next = replaceOnce(
+    next,
+    `(20 * ln(amplitude.toDouble() / 32767.0)).toInt()`,
+    `(20 * kotlin.math.log10(amplitude.toDouble() / 32767.0)).toInt()`,
+    'AudioRecorder.meteringLog10'
+  );
+
   return next;
 }
 

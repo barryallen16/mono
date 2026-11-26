@@ -49,14 +49,14 @@ function getRecordingOptions(): RecordingOptions {
   const base = RecordingPresets.HIGH_QUALITY;
   return {
     ...base,
-    sampleRate: 16000,
+    sampleRate: 48000,
     numberOfChannels: 1,
-    bitRate: 64000,
+    bitRate: 128000,
     isMeteringEnabled: true,
     android: {
       ...base.android,
       extension: '.m4a',
-      sampleRate: 16000,
+      sampleRate: 48000,
       outputFormat: 'mpeg4',
       audioEncoder: 'aac',
     },
@@ -355,6 +355,7 @@ export default function CaptureScreen() {
     setError(null);
     setHoldHint(null);
 
+    let prepared = false;
     try {
       await stopActivePlayback();
       if (!mountedRef.current || !wantRecordingRef.current) {
@@ -388,6 +389,7 @@ export default function CaptureScreen() {
       }
 
       await recorder.prepareToRecordAsync();
+      prepared = true;
       if (!mountedRef.current || !wantRecordingRef.current) {
         await recorder.stop().catch(() => {});
         await discardTempAudioClip(recorder.uri);
@@ -434,6 +436,13 @@ export default function CaptureScreen() {
       }, 250);
     } catch (err) {
       wantRecordingRef.current = false;
+      if (prepared && !recordingActiveRef.current) {
+        await recorder.stop().catch(() => {});
+        await discardTempAudioClip(recorder.uri).catch(() => {});
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
+          () => {}
+        );
+      }
       if (mountedRef.current) {
         resetRecordingUi();
         const detail = err instanceof Error && err.message ? ` (${err.message})` : '';

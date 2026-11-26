@@ -22,7 +22,9 @@ import kotlin.math.sin
 internal object AudioDecoder {
   const val TARGET_SAMPLE_RATE = 16000
   private const val PCM_24BIT_ENCODING = 21
+  private const val PCM_32BIT_ENCODING = 22
   private const val SINC_ZERO_CROSSINGS = 8.0
+  private const val MAX_EXACT_PHASES = 256
 
   private const val MAX_POST_EOS_EMPTY_LOOPS = 300
 
@@ -105,7 +107,7 @@ internal object AudioDecoder {
           if (!inputDone) {
             val inIdx = codec.dequeueInputBuffer(10_000)
             if (inIdx >= 0) {
-              val inBuf = codec.getInputBuffer(inIdx)!!
+              val inBuf = codec.getInputBuffer(inIdx) ?: continue
               val sampleSize = extractor.readSampleData(inBuf, 0)
               if (sampleSize < 0) {
                 codec.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
@@ -268,7 +270,24 @@ internal object AudioDecoder {
         FloatArray(frames) { frame ->
           var sum = 0f
           for (c in 0 until ch) {
-            sum += buf.getFloat((frame * ch + c) * 4)
+            val s = buf.getFloat((frame * ch + c) * 4)
+            if (!s.isNaN()) sum += s
+          }
+          (sum / ch).coerceIn(-1f, 1f)
+        }
+      }
+      PCM_32BIT_ENCODING -> {
+        val frames = (bytes.size / 4) / ch
+        FloatArray(frames) { frame ->
+          var sum = 0f
+          for (c in 0 until ch) {
+            val base = (frame * ch + c) * 4
+            val b0 = bytes[base].toInt() and 0xFF
+            val b1 = bytes[base + 1].toInt() and 0xFF
+            val b2 = bytes[base + 2].toInt() and 0xFF
+            val b3 = bytes[base + 3].toInt()
+            val sample32 = b0 or (b1 shl 8) or (b2 shl 16) or (b3 shl 24)
+            sum += sample32 / 2147483648f
           }
           (sum / ch).coerceIn(-1f, 1f)
         }
@@ -312,6 +331,17 @@ internal object AudioDecoder {
     }
   }
 
+  private fun gcd(a: Int, b: Int): Int {
+    var x = a
+    var y = b
+    while (y != 0) {
+      val t = x % y
+      x = y
+      y = t
+    }
+    return x.coerceAtLeast(1)
+  }
+
   private fun resample(input: FloatArray, srcRate: Int, dstRate: Int): FloatArray {
     if (input.isEmpty() || srcRate <= 0 || dstRate <= 0 || srcRate == dstRate) return input
     val ratio = srcRate.toDouble() / dstRate.toDouble()
@@ -330,27 +360,62 @@ internal object AudioDecoder {
     val cutoff = dstRate.toDouble() / srcRate.toDouble()
     val windowSupport = SINC_ZERO_CROSSINGS / cutoff
     val halfWidth = ceil(windowSupport).toInt()
-    val lastIdx = input.size - 1
+    val tapCount = 2 * halfWidth + 1
+    val exactPhases = dstRate / gcd(srcRate, dstRate)
+    val numPhases = if (exactPhases <= MAX_EXACT_PHASES) exactPhases else MAX_EXACT_PHASES
 
-    return FloatArray(outLength) { i ->
-      val center = i * ratio
-      val start = (floor(center).toInt() - halfWidth).coerceAtLeast(0)
-      val end = (ceil(center).toInt() + halfWidth).coerceAtMost(lastIdx)
-      var sum = 0.0
+    // Precompute normalized Hann-windowed sinc kernels per fractional phase to avoid trig in the sample loop.
+    val kernelTable = FloatArray(numPhases * tapCount)
+    for (p in 0 until numPhases) {
+      val frac = p.toDouble() / numPhases.toDouble()
+      val base = p * tapCount
       var weightSum = 0.0
-
-      for (j in start..end) {
-        val dx = j - center
+      for (t in 0 until tapCount) {
+        val dx = (t - halfWidth) - frac
         if (abs(dx) >= windowSupport) continue
         val hann = 0.5 * (1.0 + cos(PI * dx / windowSupport))
         val arg = PI * cutoff * dx
         val sinc = if (abs(arg) < 1e-8) 1.0 else sin(arg) / arg
         val w = sinc * hann
-        sum += input[j] * w
+        kernelTable[base + t] = w.toFloat()
         weightSum += w
       }
+      if (weightSum > 0.0) {
+        val inv = (1.0 / weightSum).toFloat()
+        for (t in 0 until tapCount) {
+          kernelTable[base + t] *= inv
+        }
+      }
+    }
 
-      if (weightSum > 0.0) (sum / weightSum).toFloat().coerceIn(-1f, 1f) else 0f
+    val lastIdx = input.size - 1
+    return FloatArray(outLength) { i ->
+      val center = i * ratio
+      val baseSample = floor(center).toInt()
+      val frac = center - baseSample
+      val phase = ((frac * numPhases).toInt()).coerceIn(0, numPhases - 1)
+      val kernelBase = phase * tapCount
+      val firstSrc = baseSample - halfWidth
+      var sum = 0f
+
+      if (firstSrc >= 0 && firstSrc + tapCount - 1 <= lastIdx) {
+        for (t in 0 until tapCount) {
+          sum += input[firstSrc + t] * kernelTable[kernelBase + t]
+        }
+      } else {
+        var edgeWeight = 0f
+        for (t in 0 until tapCount) {
+          val srcIdx = firstSrc + t
+          if (srcIdx in 0..lastIdx) {
+            val w = kernelTable[kernelBase + t]
+            sum += input[srcIdx] * w
+            edgeWeight += w
+          }
+        }
+        if (edgeWeight > 0f) sum /= edgeWeight
+      }
+
+      sum.coerceIn(-1f, 1f)
     }
   }
 }
