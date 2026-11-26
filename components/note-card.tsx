@@ -367,7 +367,9 @@ export function NoteCard({
           ) : note.extractEngine === 'none' && note.transcript.trim() ? (
             <View className="flex-row items-center justify-between gap-2">
               <Text className="flex-1 font-mono text-xs text-muted">
-                {note.lastError || 'Not extracted'}
+                {note.lastError && !/^needle\s*3\b/i.test(note.lastError)
+                  ? note.lastError
+                  : 'Not extracted'}
               </Text>
               {onRetry ? (
                 <Tappable

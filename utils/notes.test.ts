@@ -10,7 +10,6 @@ import {
   formatDuration,
   formatLocalDate,
   mergeCactusNoteFields,
-  mergeChunkTranscripts,
   MonoNote,
   toggleActionInList,
 } from './notes';
@@ -102,7 +101,7 @@ describe('Cactus Whistle + Needle 3 field helpers', () => {
     );
   });
 
-  it('uses Needle 3 structured extraction and prefixes #voice for audio notes', () => {
+  it('trusts Needle 3 tags and tasks while enforcing todo, voice, and log invariants', () => {
     const merged = mergeCactusNoteFields(
       'Fix the login crash before tomorrow and test SQLite',
       14,
@@ -123,9 +122,10 @@ describe('Cactus Whistle + Needle 3 field helpers', () => {
       ['Fix the login crash', 'Test SQLite tomorrow']
     );
     assert.equal(merged.extractEngine, 'needle3');
+    assert.equal(merged.extractConfidence, null);
   });
 
-  it('returns extractEngine none when Needle 3 did not match', () => {
+  it('uses structural fallback without regex heuristics when Needle 3 misses save_note', () => {
     const unextracted = mergeCactusNoteFields('Todo: fix login crash tomorrow.', 0, null, {
       matched: false,
       title: '',
@@ -140,30 +140,62 @@ describe('Cactus Whistle + Needle 3 field helpers', () => {
     assert.equal(unextracted.extractConfidence, null);
   });
 
-  it('filters Needle 3 tags to ALLOWED_NOTE_TAGS and preserves confidence', () => {
-    const merged = mergeCactusNoteFields('Quiet afternoon walk', 0, null, {
-      matched: true,
-      title: 'Afternoon walk',
-      summary: 'Short break outside.',
-      tags: ['  SHIP ', 'random-slop', 'IDEA', 'work'],
-      actionItems: [],
-      confidence: 0.87,
-    });
-    assert.deepEqual(merged.tags, ['ship', 'idea']);
-    assert.ok(merged.tags.every((t) => (ALLOWED_NOTE_TAGS as readonly string[]).includes(t)));
-    assert.equal(merged.extractEngine, 'needle3');
-    assert.equal(merged.extractConfidence, 0.87);
+  it('filters unsupported tags, enforces todo parity, and deduplicates tasks', () => {
+    const filtered = mergeCactusNoteFields(
+      'Saw a bug on my screen and chatted with Priya.',
+      0,
+      null,
+      {
+        matched: true,
+        title: 'Bug on screen with Priya',
+        summary: '',
+        tags: ['people', 'other', 'todo'],
+        actionItems: ['Is this even a task?', '  '],
+        confidence: 0.87,
+      }
+    );
+    assert.deepEqual(filtered.tags, ['people']);
+    assert.deepEqual(filtered.actionItems, []);
+    assert.equal(filtered.extractEngine, 'needle3');
+    assert.equal(filtered.extractConfidence, 0.87);
 
-    const defaultedTags = mergeCactusNoteFields('Need to fix crash tomorrow', 0, null, {
+    const multiTask = mergeCactusNoteFields(
+      'Remind me to buy apples and bananas, call Mom, and push the APK build.',
+      0,
+      'file:///clip.m4a',
+      {
+        matched: true,
+        title: 'Errands and APK release',
+        summary: '',
+        tags: ['ship', 'people', 'unsupported'],
+        actionItems: [
+          'Buy apples and bananas',
+          'buy apples and bananas.',
+          'Call Mom',
+          'Push the APK build',
+        ],
+        confidence: 0.72,
+      }
+    );
+    assert.deepEqual(
+      multiTask.actionItems.map((item) => item.text),
+      ['Buy apples and bananas', 'Call Mom', 'Push the APK build']
+    );
+    assert.deepEqual(multiTask.tags, ['voice', 'ship', 'people', 'todo']);
+    assert.ok(
+      multiTask.tags
+        .filter((t) => t !== 'voice')
+        .every((t) => (ALLOWED_NOTE_TAGS as readonly string[]).includes(t))
+    );
+
+    const defaulted = mergeCactusNoteFields('Random uncategorized thought', 0, null, {
       matched: true,
-      title: 'Fix crash',
-      summary: 'Crash needs fixing.',
-      tags: ['unsupported', 'misc'],
+      title: 'Uncategorized thought',
+      summary: '',
+      tags: ['unsupported'],
       actionItems: [],
-      confidence: 0.42,
     });
-    assert.deepEqual(defaultedTags.tags, ['log']);
-    assert.equal(defaultedTags.extractConfidence, 0.42);
+    assert.deepEqual(defaulted.tags, ['log']);
   });
 
   it('returns extractEngine none for empty voice memo', () => {
@@ -178,37 +210,6 @@ describe('Cactus Whistle + Needle 3 field helpers', () => {
     assert.equal(emptyMemo.title, 'Voice memo (00:09)');
     assert.equal(emptyMemo.extractEngine, 'none');
     assert.equal(emptyMemo.extractConfidence, null);
-  });
-});
-
-describe('mergeChunkTranscripts', () => {
-  it('handles empty arrays, blank chunks, and single chunks', () => {
-    assert.equal(mergeChunkTranscripts([]), '');
-    assert.equal(mergeChunkTranscripts(['   ', '']), '');
-    assert.equal(mergeChunkTranscripts(['  Single chunk note  ']), 'Single chunk note');
-  });
-
-  it('deduplicates 1-6 overlapping boundary words across consecutive chunks', () => {
-    assert.equal(
-      mergeChunkTranscripts(['Fix the login crash', 'crash before release']),
-      'Fix the login crash before release'
-    );
-    assert.equal(
-      mergeChunkTranscripts([
-        'Remember to verify the SQLite migration script',
-        'the sqlite migration script. Then run tests',
-      ]),
-      'Remember to verify the SQLite migration script. Then run tests'
-    );
-    assert.equal(
-      mergeChunkTranscripts([
-        'one two three four five six seven',
-        'two three four five six seven eight',
-        '',
-        'seven eight nine',
-      ]),
-      'one two three four five six seven eight nine'
-    );
   });
 });
 

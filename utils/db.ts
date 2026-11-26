@@ -187,7 +187,8 @@ export function processSavedNote(noteId: number, draftText = ''): Promise<MonoNo
     const userEdited =
       latest.title !== note.title ||
       latest.transcript !== note.transcript ||
-      JSON.stringify(latest.tags) !== JSON.stringify(note.tags);
+      JSON.stringify(latest.tags) !== JSON.stringify(note.tags) ||
+      JSON.stringify(latest.actionItems) !== JSON.stringify(note.actionItems);
 
     const nextTitle = userEdited ? latest.title : fields.title;
     const nextTranscript = userEdited ? latest.transcript : fields.transcript;

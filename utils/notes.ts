@@ -27,10 +27,70 @@ export interface MonoNote {
   createdAt: string;
 }
 
-const ALLOWED_TAG_SET = new Set<string>(ALLOWED_NOTE_TAGS);
 const AUDIO_STATES = new Set<AudioState>(['none', 'pending', 'done', 'failed']);
 const STT_ENGINES = new Set<SttEngine>(['whistle', 'none']);
 const EXTRACT_ENGINES = new Set<ExtractEngine>(['needle3', 'none']);
+const ALLOWED_TAG_SET = new Set<string>(ALLOWED_NOTE_TAGS);
+
+function normalizeTaskCompareKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanActionItems(rawItems: string[]): ActionItem[] {
+  const now = Date.now();
+  const deduped: string[] = [];
+  const dedupedKeys: string[] = [];
+
+  for (const raw of rawItems) {
+    const clean = raw
+      .trim()
+      .replace(/^[-*•\d.)]+\s*/, '')
+      .replace(/[.;,]+$/, '')
+      .trim();
+    if (clean.length < 3 || clean.endsWith('?')) continue;
+
+    const normalized = clean.charAt(0).toUpperCase() + clean.slice(1);
+    const key = normalizeTaskCompareKey(normalized);
+    if (!key) continue;
+
+    const isDuplicate = dedupedKeys.some(
+      (existing) => existing === key || existing.includes(key) || key.includes(existing)
+    );
+    if (!isDuplicate) {
+      deduped.push(normalized);
+      dedupedKeys.push(key);
+    }
+    if (deduped.length >= 6) break;
+  }
+
+  return deduped.map((text, idx) => ({ id: `act-${now}-${idx}`, text, done: false }));
+}
+
+function finalizeTags(
+  rawTags: string[],
+  actionItems: Pick<ActionItem, 'text'>[],
+  audioUri: string | null = null
+): string[] {
+  const found = new Set<string>();
+  for (const raw of rawTags) {
+    const tag = raw.trim().toLowerCase();
+    if (tag !== 'todo' && ALLOWED_TAG_SET.has(tag)) {
+      found.add(tag);
+    }
+  }
+  if (actionItems.length > 0) {
+    found.add('todo');
+  }
+  const ordered = ALLOWED_NOTE_TAGS.filter((tag) => found.has(tag));
+  if (audioUri) {
+    return Array.from(new Set(['voice', ...ordered])).slice(0, 4);
+  }
+  return ordered.length > 0 ? ordered.slice(0, 4) : ['log'];
+}
 
 export function parseAudioState(value: unknown): AudioState {
   return typeof value === 'string' && AUDIO_STATES.has(value as AudioState)
@@ -103,51 +163,6 @@ export function combineDraftAndTranscript(draftText: string, heardText: string):
   return heard || draft;
 }
 
-function normalizeBoundaryWord(word: string): string {
-  return word.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, '');
-}
-
-export function mergeChunkTranscripts(chunks: string[]): string {
-  const nonEmpty = chunks.map((chunk) => chunk.trim()).filter(Boolean);
-  if (nonEmpty.length === 0) return '';
-  if (nonEmpty.length === 1) return nonEmpty[0];
-
-  const words = nonEmpty[0].split(/\s+/).filter(Boolean);
-  for (let i = 1; i < nonEmpty.length; i += 1) {
-    const nextWords = nonEmpty[i].split(/\s+/).filter(Boolean);
-    const maxOverlap = Math.min(6, words.length, nextWords.length);
-    let overlap = 0;
-
-    for (let k = maxOverlap; k >= 1; k -= 1) {
-      let matched = true;
-      for (let j = 0; j < k; j += 1) {
-        const left = normalizeBoundaryWord(words[words.length - k + j]);
-        const right = normalizeBoundaryWord(nextWords[j]);
-        if (!left || left !== right) {
-          matched = false;
-          break;
-        }
-      }
-      if (matched) {
-        overlap = k;
-        break;
-      }
-    }
-
-    if (
-      overlap > 0 &&
-      /[.!?,;:]$/.test(nextWords[overlap - 1]) &&
-      !/[.!?,;:]$/.test(words[words.length - 1])
-    ) {
-      words[words.length - 1] = nextWords[overlap - 1];
-    }
-
-    words.push(...nextWords.slice(overlap));
-  }
-
-  return words.join(' ');
-}
-
 export interface CactusStructuredInput {
   matched: boolean;
   title: string;
@@ -175,20 +190,8 @@ export function mergeCactusNoteFields(
 
   const title = cactus.title.trim() || fallback.title;
   const summary = cactus.summary.trim();
-  const rawTags = cactus.tags
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => ALLOWED_TAG_SET.has(t));
-  const baseTags = rawTags.length > 0 ? rawTags : ['log'];
-  const tags = audioUri
-    ? Array.from(new Set(['voice', ...baseTags])).slice(0, 4)
-    : Array.from(new Set(baseTags)).slice(0, 4);
-
-  const now = Date.now();
-  const actionItems: ActionItem[] = cactus.actionItems
-    .map((text) => text.trim())
-    .filter(Boolean)
-    .slice(0, 5)
-    .map((text, idx) => ({ id: `act-${now}-${idx}`, text, done: false }));
+  const actionItems = cleanActionItems(cactus.actionItems);
+  const tags = finalizeTags(cactus.tags, actionItems, audioUri);
 
   const extractConfidence =
     typeof cactus.confidence === 'number' && Number.isFinite(cactus.confidence)

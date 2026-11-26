@@ -112,13 +112,17 @@ export async function processNoteWithCactus(
     } else {
       try {
         extracted = await extractWithNeedle3(finalTranscript, localDate);
-        if (extracted && !extracted.matched && !lastError) {
-          lastError = extracted.rawError || 'Needle 3 did not emit a save_note tool call.';
+        if (extracted && !extracted.matched) {
+          console.warn(
+            '[cactus]',
+            extracted.rawError || 'Needle 3 did not emit a save_note tool call.'
+          );
         }
       } catch (err) {
         extracted = null;
+        console.warn('[cactus] structured extraction failed:', err);
         if (!lastError) {
-          lastError = err instanceof Error ? err.message : 'Structured extraction failed.';
+          lastError = 'Could not extract note details.';
         }
       }
     }

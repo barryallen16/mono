@@ -2,6 +2,7 @@ package expo.modules.cactusnative
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -40,8 +41,8 @@ private val MODEL_SPECS = listOf(
   CactusModelSpec(
     id = "needle3",
     filename = "needle3.cact",
-    url = "https://huggingface.co/Cactus-Compute/needle3/resolve/d6c7d6a2e9655505e0f8e23339356dd1705900eb/needle3.cact",
-    sha256 = "c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38",
+    url = "https://huggingface.co/barryallen16/needle3-notes/resolve/ffb226b2f8feacf7ddb49f46795c89ae26d2dc6c/tuned.cact",
+    sha256 = "697fead70617b80f5bc74765aafb5062ee25e6ef910fab5ed5f613329218c55a",
     maskBit = 1
   )
 )
@@ -49,12 +50,19 @@ private val MODEL_SPECS = listOf(
 private const val MAX_WHISTLE_CHUNK_SAMPLES = 30 * 16000
 private const val OVERLAP_SAMPLES = (1.5 * 16000).toInt()
 private const val MAX_OVERLAP_WORDS = 6
-private val ALLOWED_TAGS = setOf("bug", "ship", "idea", "people", "todo", "study", "log")
+private val BOOLEAN_TAG_FLAGS = listOf(
+  "is_bug" to "bug",
+  "is_ship" to "ship",
+  "is_idea" to "idea",
+  "is_people" to "people",
+  "is_study" to "study"
+)
 
 private val NOTE_TOOLS_JSON = JSONArray().put(
   JSONObject()
     .put("name", "save_note")
-    .put("description", "Save a voice note with title, category tags, and action items.")
+    .put("description", "Save a voice or text note with headline, category flags, and pending todo tasks.")
+    .put("triggers", JSONArray(listOf("\\S")))
     .put(
       "parameters",
       JSONObject()
@@ -66,29 +74,47 @@ private val NOTE_TOOLS_JSON = JSONArray().put(
               "title",
               JSONObject()
                 .put("type", "string")
-                .put("description", "Short headline from the note")
+                .put("description", "Short headline copied from the note")
             )
             .put(
-              "tags",
+              "is_bug",
               JSONObject()
-                .put("type", "array")
-                .put(
-                  "items",
-                  JSONObject()
-                    .put("type", "string")
-                    .put(
-                      "enum",
-                      JSONArray(ALLOWED_TAGS.toList())
-                    )
-                )
-                .put("description", "Matching category tags")
+                .put("type", "boolean")
+                .put("description", "True only for software bug, crash, or error")
+            )
+            .put(
+              "is_ship",
+              JSONObject()
+                .put("type", "boolean")
+                .put("description", "True for release, build, deploy, or PR")
+            )
+            .put(
+              "is_idea",
+              JSONObject()
+                .put("type", "boolean")
+                .put("description", "True for feature idea, brainstorm, or open question")
+            )
+            .put(
+              "is_people",
+              JSONObject()
+                .put("type", "boolean")
+                .put("description", "True when a person, friend, family, or contact is mentioned")
+            )
+            .put(
+              "is_study",
+              JSONObject()
+                .put("type", "boolean")
+                .put("description", "True for reading, learning, papers, books, or courses")
             )
             .put(
               "action_items",
               JSONObject()
                 .put("type", "array")
                 .put("items", JSONObject().put("type", "string"))
-                .put("description", "Todo tasks mentioned in the note")
+                .put(
+                  "description",
+                  "Pending future todo tasks copied from the note. Omit past events and observations."
+                )
             )
         )
         .put("required", JSONArray(listOf("title")))
@@ -443,7 +469,8 @@ class CactusNativeModule : Module() {
       inferenceMutex.withLock {
         withContext(Dispatchers.IO) {
           if (initializedDate != localDate) {
-            val systemPrompt = "date: ${formatDateFact(localDate)}"
+            val systemPrompt =
+              "date: ${formatDateFact(localDate)}; Always save notes with save_note. Copy headline and pending future tasks verbatim. Omit completed past events, questions, and observations from action_items."
             CactusBridge.initText(systemPrompt, NOTE_TOOLS_JSON)
             initializedDate = localDate
           }
@@ -453,6 +480,8 @@ class CactusNativeModule : Module() {
           val root = try {
             JSONObject(rawJson)
           } catch (_: Exception) {
+            val rawErr = "Needle 3 invalid JSON: ${preview.ifEmpty { "<empty>" }}"
+            Log.w("CactusNative", rawErr)
             return@withContext mapOf(
               "matched" to false,
               "title" to "",
@@ -460,7 +489,7 @@ class CactusNativeModule : Module() {
               "tags" to emptyList<String>(),
               "actionItems" to emptyList<String>(),
               "confidence" to null,
-              "rawError" to "Needle 3 invalid JSON: ${preview.ifEmpty { "<empty>" }}"
+              "rawError" to rawErr
             )
           }
           val calls = root.optJSONArray("function_calls")
@@ -482,14 +511,7 @@ class CactusNativeModule : Module() {
               else -> JSONObject()
             }
           }
-          val tagsArr = args.optJSONArray("tags") ?: JSONArray()
           val itemsArr = args.optJSONArray("action_items") ?: JSONArray()
-
-          val tags = mutableListOf<String>()
-          for (i in 0 until tagsArr.length()) {
-            val t = tagsArr.optString(i, "").trim().lowercase()
-            if (t in ALLOWED_TAGS && t !in tags) tags.add(t)
-          }
 
           val actionItems = mutableListOf<String>()
           for (i in 0 until itemsArr.length()) {
@@ -497,9 +519,24 @@ class CactusNativeModule : Module() {
             if (item.isNotEmpty()) actionItems.add(item)
           }
 
+          val tags = mutableListOf<String>()
+          for ((flag, tag) in BOOLEAN_TAG_FLAGS) {
+            if (args.optBoolean(flag, false)) tags.add(tag)
+          }
+          if (actionItems.isNotEmpty()) {
+            tags.add("todo")
+          }
+          if (tags.isEmpty()) {
+            tags.add("log")
+          }
+
           val rawConfidence = if (root.isNull("confidence")) null else root.optDouble("confidence", Double.NaN)
           val confidence = rawConfidence?.takeIf { !it.isNaN() && !it.isInfinite() }
 
+          val rawErr = if (validCall) null else "Needle 3 missed save_note: ${preview.ifEmpty { "<empty>" }}"
+          if (rawErr != null) {
+            Log.w("CactusNative", rawErr)
+          }
           mapOf(
             "matched" to validCall,
             "title" to args.optString("title", "").trim(),
@@ -507,7 +544,7 @@ class CactusNativeModule : Module() {
             "tags" to tags,
             "actionItems" to actionItems,
             "confidence" to confidence,
-            "rawError" to if (validCall) null else "Needle 3 missed save_note: ${preview.ifEmpty { "<empty>" }}"
+            "rawError" to rawErr
           )
         }
       }
